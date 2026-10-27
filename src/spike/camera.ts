@@ -104,9 +104,20 @@ function computeMap() {
 const toCanvas = (p: NormalizedLandmark) => ({ x: map.ox + (1 - p.x) * map.dw, y: map.oy + p.y * map.dh });
 
 // ---------- setup ----------
+// MediaPipe sometimes rejects with plain strings or events; make every failure readable.
+function describe(e: unknown): string {
+  if (e instanceof Error) return e.message || e.name;
+  if (typeof e === 'string') return e;
+  if (e instanceof Event) return `evento ${e.type}` + (e.target instanceof HTMLScriptElement ? ` (${e.target.src})` : '');
+  try { return JSON.stringify(e); } catch { return String(e); }
+}
+
+let gpuError = '';
 async function loadModel() {
   const t0 = performance.now();
-  const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+  let fileset;
+  try { fileset = await FilesetResolver.forVisionTasks(WASM_BASE); }
+  catch (e) { throw new Error(`motor wasm: ${describe(e)}`); }
   try {
     landmarker = await HandLandmarker.createFromOptions(fileset, {
       baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
@@ -114,11 +125,16 @@ async function loadModel() {
     });
     delegate = 'GPU';
   } catch (e) {
-    landmarker = await HandLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
-      runningMode: 'VIDEO', numHands: 1,
-    });
-    delegate = 'CPU';
+    gpuError = describe(e);
+    try {
+      landmarker = await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
+        runningMode: 'VIDEO', numHands: 1,
+      });
+      delegate = 'CPU';
+    } catch (e2) {
+      throw new Error(`GPU: ${gpuError} | CPU: ${describe(e2)}`);
+    }
   }
   modelMs = Math.round(performance.now() - t0);
 }
@@ -132,7 +148,7 @@ async function startCamera() {
       audio: false,
     });
   } catch (e) {
-    lastError = 'câmera: ' + (e as Error).message;
+    lastError = 'câmera: ' + describe(e);
     return;
   }
   video.srcObject = stream;
@@ -242,7 +258,7 @@ function draw(now: number) {
 function hudText() {
   const handPct = frames ? Math.round((framesWithHand / frames) * 100) : 0;
   return [
-    landmarker ? `modelo ok (${delegate}, ${modelMs} ms p/ carregar)` : 'carregando modelo…',
+    landmarker ? `modelo ok (${delegate}, ${modelMs} ms p/ carregar)${gpuError ? ` · GPU falhou: ${gpuError}` : ''}` : lastError ? 'modelo falhou' : 'carregando modelo…',
     `detecção: ${rate(inferStamps).toFixed(1)} fps · ${median(inferTimes).toFixed(1)} ms/quadro (mediana)`,
     `tela: ${rate(renderStamps).toFixed(0)} fps · câmera ${video.videoWidth}×${video.videoHeight}`,
     `mão visível: ${handPct}% · raspadas: ${scrapeHits} · adesivos: ${scraped} · tchaus: ${waves}`,
@@ -312,5 +328,5 @@ $<HTMLButtonElement>('#report').addEventListener('click', async () => {
   catch { hud.textContent = text; }
 });
 
-loadModel().catch((e) => { lastError = 'modelo: ' + (e as Error).message; });
+loadModel().catch((e) => { lastError = 'modelo: ' + describe(e); });
 requestAnimationFrame(loop);

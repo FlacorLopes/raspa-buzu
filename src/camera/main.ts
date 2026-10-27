@@ -67,6 +67,7 @@ function resetRun() {
   elapsed = 0; events = [];
   score = scraped = passed = forced = blocked = penalties = 0;
   ripMs = [];
+  releaseTimes = []; mayorCooldown = 0; mayorShownAt = 0;
   voters = 300; eventIdx = 0; unlocked = false; arrested = false;
   lastScrapeT = -Infinity; penaltyCooldown = 0;
   paris = { text: '', until: 0, next: PARIS_FIRST_MS, before: shuffle(PARIS_BEFORE), after: shuffle(PARIS_AFTER) };
@@ -221,6 +222,57 @@ function leave(at: number, how: string) {
   score++;
   voters = Math.max(0, voters - BUS_CAPACITY);
   setTimeout(() => sfx?.horn(), Math.max(0, at - elapsed));
+  checkMayor(at);
+}
+
+// ---------- easter egg: releasing buses too fast brings the mayor in ----------
+// Satire cameo (fictional line, cartoon of the mayor) drawn into the canvas, so it is in the video.
+const MAYOR_IMG = new Image();
+MAYOR_IMG.src = '/easter/prefeito.png';
+const MAYOR_BURST = 3;               // buses released...
+const MAYOR_WINDOW_MS = 5000;        // ...within this much game time
+const MAYOR_COOLDOWN_MS = 15000;     // game time before he can show up again
+const MAYOR_SHOW_MS = 2600;          // real time on screen
+const MAYOR_SLIDE_MS = 260;
+let releaseTimes: number[] = [];
+let mayorCooldown = 0;
+let mayorShownAt = 0;
+
+function checkMayor(at: number) {
+  releaseTimes.push(at);
+  while (releaseTimes.length && at - releaseTimes[0] > MAYOR_WINDOW_MS) releaseTimes.shift();
+  if (releaseTimes.length >= MAYOR_BURST && at >= mayorCooldown) {
+    mayorShownAt = performance.now();
+    mayorCooldown = at + MAYOR_COOLDOWN_MS;
+    releaseTimes = [];
+    sfx?.bad();
+  }
+}
+
+function drawMayor(now: number) {
+  const t = now - mayorShownAt;
+  if (!mayorShownAt || t > MAYOR_SHOW_MS || !MAYOR_IMG.complete || !MAYOR_IMG.naturalWidth) return;
+  const h = 560, w = h * (MAYOR_IMG.naturalWidth / MAYOR_IMG.naturalHeight);
+  const slideIn = Math.min(1, t / MAYOR_SLIDE_MS), slideOut = Math.min(1, (MAYOR_SHOW_MS - t) / MAYOR_SLIDE_MS);
+  const k = easeOut(Math.min(slideIn, slideOut));
+  const x = -w + (w - 10) * k, y = H - h - 20;
+  ctx.drawImage(MAYOR_IMG, x, y, w, h);
+
+  // speech bubble to the right of his face, tail pointing at the mouth
+  const bx = x + w * 0.72, by = y - 10, bw = 400, bh = 150;
+  ctx.globalAlpha = k;
+  ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#16191a'; ctx.lineWidth = 6;
+  ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 28); else ctx.rect(bx, by, bw, bh);
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(bx + 40, by + bh - 4); ctx.lineTo(x + w * 0.62, y + h * 0.2); ctx.lineTo(bx + 100, by + bh - 4);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(bx + 44, by + bh - 9, 52, 10);
+  ctx.fillStyle = '#16191a'; ctx.font = '400 40px Bungee, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('DÁ UMA', bx + bw / 2, by + 50, bw - 30);
+  ctx.fillText('SEGURADA AÍ!', bx + bw / 2, by + 100, bw - 30);
+  ctx.textBaseline = 'alphabetic';
+  ctx.globalAlpha = 1;
 }
 
 // ---------- effects ----------
@@ -326,6 +378,7 @@ function draw(now: number) {
     ctx.fillStyle = f.color; ctx.font = '400 56px Bungee, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x, f.y);
   }
   ctx.globalAlpha = 1;
+  if (mode === 'play') drawMayor(now);
   const cur = cursorPos(now);
   if (cur && mode !== 'endcard') drawScraper(cur);
 
@@ -402,14 +455,21 @@ function drawHud() {
   const cols = [
     ['RELÓGIO', clockText(clockMinutes(elapsed, GAME_MS))],
     ['NA RUA', String(score)],
-    ['NO PONTO', Math.round(voters).toLocaleString('pt-BR')],
+    ['PASSAGEIROS\nESPERANDO', Math.round(voters).toLocaleString('pt-BR')],
     ['BARATINÔMETRO', String(passed)],
   ];
   const lit = performance.now() < barataFlash;
   cols.forEach(([label, value], i) => {
     const x = 24 + i * 176;
-    ctx.fillStyle = i === 3 && lit ? '#ff6b5e' : '#9ba5a4'; ctx.font = '700 20px Archivo, sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText(label, x, 40, i === 3 ? 160 : 170);
+    ctx.fillStyle = i === 3 && lit ? '#ff6b5e' : '#9ba5a4'; ctx.textAlign = 'left';
+    const parts = label.split('\n');
+    if (parts.length > 1) {
+      ctx.font = '700 16px Archivo, sans-serif';
+      parts.forEach((p, j) => ctx.fillText(p, x, 26 + j * 18, 170));
+    } else {
+      ctx.font = '700 20px Archivo, sans-serif';
+      ctx.fillText(label, x, 40, i === 3 ? 160 : 170);
+    }
     if (i === 3) return;   // the baratinômetro draws its own gauge below
     ctx.fillStyle = i === 2 ? '#f3f1ea' : '#ffae1a';
     ctx.font = '400 58px VT323, monospace'; ctx.fillText(value, x, 94);
@@ -591,7 +651,10 @@ if (MOUSE) {
     tip = p; vel = { x: 0, y: 0 };
   });
   const thumbsUp = () => { if (interactive()) tryRelease(); };
-  window.addEventListener('keydown', (e) => { if (e.key === 'w' || e.key === ' ') thumbsUp(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'w' || e.key === ' ') thumbsUp();
+    if (e.key === 'p') mayorShownAt = performance.now();   // preview the mayor cameo
+  });
   cv.addEventListener('contextmenu', (e) => { e.preventDefault(); thumbsUp(); });
 }
 

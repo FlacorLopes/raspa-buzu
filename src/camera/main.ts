@@ -600,11 +600,19 @@ async function finish() {
   $<HTMLElement>('#eRank').textContent = rankFor(score);
   const m = paceMinutes(), rip = ripAvgSec();
   const parts: string[] = [];
-  if (passed > 0) parts.push(`Baratinômetro no ${baratinoLevel(passed)}: ${buses(passed)} ${passed === 1 ? 'nem tinha' : 'nem tinham'} adesivo do 13 e ${passed === 1 ? 'saiu' : 'saíram'} num joinha. Que desculpa era essa?`);
-  if (rip !== null) parts.push(`Tirar cada adesivo levou ${fmt1(rip)} s em média.`);
+  if (passed > 0) parts.push(`${buses(passed)} ${passed === 1 ? 'nem tinha adesivo e mesmo assim demorou de sair' : 'nem tinham adesivo e mesmo assim demoraram de sair'}. Que desculpa era essa?`);
+  if (rip !== null) parts.push(`Tirar cada adesivo aqui no jogo levou ${fmt1(rip)} s em média.`);
   if (m !== null) parts.push(`No seu ritmo, os ${RETIDOS} ônibus que a prefeitura admite estariam na rua em ${fmt1(m)} minutos.`);
   parts.push('O Procon-BA contou 944 ônibus parados em 9 garagens, e às 15h30 ainda havia garagem lotada.');
-  $<HTMLElement>('#eLine').textContent = parts.join(' ');
+  const eLine = $<HTMLElement>('#eLine');
+  const level = baratinoLevel(passed);
+  if (level) {
+    const head = document.createElement('strong');
+    head.textContent = `Nível de baratino: ${level}`;
+    eLine.replaceChildren(head, document.createElement('br'), parts.join(' '));
+  } else {
+    eLine.replaceChildren(parts.join(' '));
+  }
   const vid = $<HTMLVideoElement>('#eVideo');
   const share = $<HTMLButtonElement>('#eShare');
   const dl = $<HTMLAnchorElement>('#eDownload');

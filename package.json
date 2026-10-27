@@ -1,0 +1,24 @@
+{
+  "name": "raspa-buzu",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:full": "vercel dev",
+    "redis:up": "docker compose -f docker-compose.dev.yml up -d",
+    "redis:down": "docker compose -f docker-compose.dev.yml down",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --no-warnings --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.40.0",
+    "@vercel/og": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}

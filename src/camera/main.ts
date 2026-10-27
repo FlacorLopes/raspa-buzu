@@ -536,41 +536,42 @@ function drawTimeBar() {
   ctx.fillStyle = k > 0.85 ? '#d4251c' : '#f5c518'; ctx.fillRect(0, H - 14, W * (1 - k), 14);
 }
 
-function drawEndCard() {
-  ctx.fillStyle = '#101314'; ctx.fillRect(0, 0, W, H);
+/** End-of-round card, in 720x1280 game units. Drawn into the video and into the shareable image. */
+function drawEndCard(g: CanvasRenderingContext2D = ctx) {
+  g.fillStyle = '#101314'; g.fillRect(0, 0, W, H);
   for (let x = -40; x < W + 40; x += 48) {
-    ctx.fillStyle = '#f5c518'; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 24, 0); ctx.lineTo(x - 10, 34); ctx.lineTo(x - 34, 34); ctx.fill();
+    g.fillStyle = '#f5c518'; g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 24, 0); g.lineTo(x - 10, 34); g.lineTo(x - 34, 34); g.fill();
   }
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#ffae1a'; ctx.font = '400 40px VT323, monospace'; ctx.fillText('SALVADOR · 25/10 · 2º TURNO', W / 2, 150);
-  ctx.fillStyle = '#f5c518'; ctx.font = '400 110px Bungee, sans-serif'; ctx.fillText('RASPA', W / 2, 290);
-  ctx.fillStyle = '#f3f1ea'; ctx.fillText('BUZU', W / 2, 400);
-  ctx.fillStyle = '#f5c518'; ctx.font = '400 260px Bungee, sans-serif'; ctx.fillText(String(score), W / 2, 700);
-  ctx.fillStyle = '#f3f1ea'; ctx.font = '800 40px Archivo, sans-serif'; ctx.fillText('ônibus na rua em 1 minuto', W / 2, 770);
+  g.textAlign = 'center';
+  g.fillStyle = '#ffae1a'; g.font = '400 40px VT323, monospace'; g.fillText('SALVADOR · 25/10 · 2º TURNO', W / 2, 150);
+  g.fillStyle = '#f5c518'; g.font = '400 110px Bungee, sans-serif'; g.fillText('RASPA', W / 2, 290);
+  g.fillStyle = '#f3f1ea'; g.fillText('BUZU', W / 2, 400);
+  g.fillStyle = '#f5c518'; g.font = '400 260px Bungee, sans-serif'; g.fillText(String(score), W / 2, 700);
+  g.fillStyle = '#f3f1ea'; g.font = '800 40px Archivo, sans-serif'; g.fillText('ônibus na rua em 1 minuto', W / 2, 770);
   const level = baratinoLevel(passed);
-  ctx.fillStyle = level ? '#ff8d84' : '#f3f1ea'; ctx.font = '400 36px Bungee, sans-serif';
-  ctx.fillText(level ? `NÍVEL DE BARATINO: ${level.toUpperCase()}` : rankFor(score).toUpperCase(), W / 2, 845, W - 50);
-  ctx.fillStyle = '#ffae1a'; ctx.font = '400 34px VT323, monospace';
-  wrap(summaryText('meu'), W - 80).forEach((l, i) => ctx.fillText(l, W / 2, 905 + i * 37));
-  ctx.fillStyle = '#9ba5a4'; ctx.font = '600 28px Archivo, sans-serif'; ctx.fillText(`Sátira · ${SHARE_URL.replace(/^https?:\/\//, '')}`, W / 2, 1245);
+  g.fillStyle = level ? '#ff8d84' : '#f3f1ea'; g.font = '400 36px Bungee, sans-serif';
+  g.fillText(level ? `NÍVEL DE BARATINO: ${level.toUpperCase()}` : rankFor(score).toUpperCase(), W / 2, 845, W - 50);
+  g.fillStyle = '#ffae1a'; g.font = '400 34px VT323, monospace';
+  wrap(summaryText('meu'), W - 80, g).forEach((l, i) => g.fillText(l, W / 2, 905 + i * 37));
+  g.fillStyle = '#9ba5a4'; g.font = '600 28px Archivo, sans-serif'; g.fillText(`Sátira · ${SHARE_URL.replace(/^https?:\/\//, '')}`, W / 2, 1245);
 }
 
 const wrapCache = new Map<string, string[]>();
-function wrap(text: string, max: number) {
-  const key = `${ctx.font}|${max}|${text}`;
+function wrap(text: string, max: number, g: CanvasRenderingContext2D = ctx) {
+  const key = `${g.font}|${max}|${text}`;
   const hit = wrapCache.get(key);
   if (hit) return hit;
-  const lines = wrapUncached(text, max);
+  const lines = wrapUncached(text, max, g);
   if (wrapCache.size > 64) wrapCache.clear();
   wrapCache.set(key, lines);
   return lines;
 }
-function wrapUncached(text: string, max: number) {
+function wrapUncached(text: string, max: number, g: CanvasRenderingContext2D) {
   const words = text.split(' '), lines: string[] = [];
   let line = '';
   for (const w of words) {
     const test = line ? `${line} ${w}` : w;
-    if (ctx.measureText(test).width > max && line) { lines.push(line); line = w; } else line = test;
+    if (g.measureText(test).width > max && line) { lines.push(line); line = w; } else line = test;
   }
   if (line) lines.push(line);
   return lines;
@@ -595,11 +596,27 @@ function summaryText(who: 'seu' | 'meu') {
 
 // ---------- end screen ----------
 let lastFile: File | null = null;
+/** The end card as a story-sized image, for players who do not want to show up on video. */
+let cardFile: File | null = null;
+
+function renderCardImage(): Promise<File | null> {
+  const c = document.createElement('canvas');
+  c.width = 1080; c.height = 1920;
+  const g = c.getContext('2d');
+  if (!g) return Promise.resolve(null);
+  g.setTransform(c.width / W, 0, 0, c.height / H, 0, 0);
+  drawEndCard(g);
+  return new Promise((resolve) => c.toBlob(
+    (blob) => resolve(blob ? new File([blob], `raspa-buzu-${score}-onibus.png`, { type: 'image/png' }) : null),
+    'image/png',
+  ));
+}
 
 async function finish() {
   mode = 'end';
-  const file = await recorder.stop(`raspa-buzu-${score}-onibus`);
+  const [file, card] = await Promise.all([recorder.stop(`raspa-buzu-${score}-onibus`), renderCardImage()]);
   lastFile = file;
+  cardFile = card;
   const endEl = $<HTMLElement>('#end');
   $<HTMLElement>('#eScore').textContent = String(score);
   $<HTMLElement>('#eRank').textContent = rankFor(score);
@@ -623,6 +640,15 @@ async function finish() {
   } else {
     vid.hidden = true; dl.hidden = true; share.hidden = true;
   }
+  const shareCard = $<HTMLButtonElement>('#eShareCard');
+  const dlCard = $<HTMLAnchorElement>('#eCardDownload');
+  if (card) {
+    const url = URL.createObjectURL(card);
+    dlCard.href = url; dlCard.download = card.name; dlCard.hidden = false;
+    shareCard.hidden = !(navigator.canShare && navigator.canShare({ files: [card] }));
+  } else {
+    shareCard.hidden = true; dlCard.hidden = true;
+  }
   endEl.hidden = false;
 }
 
@@ -638,6 +664,11 @@ function shareText() {
 $<HTMLButtonElement>('#eShare').addEventListener('click', async () => {
   if (!lastFile) return;
   try { await navigator.share({ files: [lastFile], text: shareText() }); }
+  catch { /* user closed the share sheet */ }
+});
+$<HTMLButtonElement>('#eShareCard').addEventListener('click', async () => {
+  if (!cardFile) return;
+  try { await navigator.share({ files: [cardFile], text: shareText() }); }
   catch { /* user closed the share sheet */ }
 });
 $<HTMLButtonElement>('#eAgain').addEventListener('click', () => {

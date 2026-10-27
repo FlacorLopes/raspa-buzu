@@ -8,6 +8,7 @@ import {
 import { ACCESS_TOAST, CLEAN_BUS_TOASTS, DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, baratinoLevel, clockMinutes, clockText, rankFor } from '../content.ts';
 import { HandTracker, OneEuro, isThumbUp, type Pt } from './hands.ts';
 import { ThumbGate } from './thumb-gate.ts';
+import { GESTURE_MODEL_URLS, LANDMARKER_MODEL_URLS, WASM_BASES } from './assets.ts';
 import { Sfx } from './audio.ts';
 import { CanvasRecorder } from './recorder.ts';
 import { accessCenter, drawBusFront, stickerCenter, stickerRadius, type Rect } from './bus-art.ts';
@@ -34,8 +35,8 @@ const SPEED = MOUSE ? Math.max(1, Number(QS.get('speed')) || 1) : 1;
 // ?gr=0 falls back to the plain landmarker (thumbs-up from a pose heuristic) for comparison.
 const GESTURE_MODEL = new URLSearchParams(location.search).get('gr') !== '0';
 const tracker = GESTURE_MODEL
-  ? new HandTracker('/mediapipe/wasm', '/mediapipe/gesture_recognizer.task', 'gesture')
-  : new HandTracker('/mediapipe/wasm', '/mediapipe/hand_landmarker.task', 'landmarker');
+  ? new HandTracker(WASM_BASES, GESTURE_MODEL_URLS, 'gesture')
+  : new HandTracker(WASM_BASES, LANDMARKER_MODEL_URLS, 'landmarker');
 const THUMB_MIN_SCORE = 0.55;
 const video = document.createElement('video');
 video.playsInline = true; video.muted = true;
@@ -427,11 +428,12 @@ function drawDebug() {
   const lines = [
     `det ${tracker.fps().toFixed(1)}/s · inferência ${t.inferMs.toFixed(0)} ms · atraso ${t.latencyMs.toFixed(0)} ms`,
     `desenho ${avg.toFixed(1)} ms · ${tracker.delegate} · ${tracker.source} · gravação ${RECORD ? 'on' : 'off'} · tela ${cv.width}x${cv.height}`,
+    `motor ${tracker.sources.wasm.includes('jsdelivr') ? 'CDN' : 'local'} · modelo ${tracker.sources.model.includes('googleapis') ? 'CDN' : 'local'}`,
     `modelo ${tracker.kind} · gesto ${tracker.lastGesture ? `${tracker.lastGesture.name} ${(tracker.lastGesture.score * 100).toFixed(0)}%` : '-'} · joinhas seguidos ${thumbGate.streak} (${thumbGate.isArmed ? 'armado' : 'solte o polegar'})`,
   ];
-  ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, H - 120, W, 100);
+  ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, H - 148, W, 128);
   ctx.fillStyle = '#7CFC9A'; ctx.font = '400 26px VT323, monospace'; ctx.textAlign = 'left';
-  lines.forEach((l, i) => ctx.fillText(l, 12, H - 92 + i * 28));
+  lines.forEach((l, i) => ctx.fillText(l, 12, H - 120 + i * 28));
 }
 
 function loadPct() {
@@ -664,7 +666,7 @@ function shareText() {
   const ripText = rip !== null ? ` Tirar o adesivo levou ${fmt1(rip)} s.` : '';
   const pace = m !== null ? ` No meu ritmo, os ${RETIDOS} ônibus retidos em Salvador estariam na rua em ${fmt1(m)} minutos.` : '';
   const clean = passed > 0 ? ` ${buses(passed)} nem tinham adesivo: baratinômetro no ${baratinoLevel(passed)}.` : '';
-  return `🚌 Botei ${buses(score)} na rua em 1 minuto no Raspa Buzu.${clean}${ripText}${pace} O Procon contou 944 ônibus parados. Duvido você. ${SHARE_URL}/camera/`;
+  return `🚌 Botei ${buses(score)} na rua em 1 minuto no Raspa Buzu.${clean}${ripText}${pace} O Procon contou 944 ônibus parados. Duvido você. ${SHARE_URL}`;
 }
 
 $<HTMLButtonElement>('#eShare').addEventListener('click', async () => {

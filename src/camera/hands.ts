@@ -8,6 +8,8 @@ export type { Gesture, ModelKind, Pt };
 export class HandTracker {
   ready = false;
   delegate = '';
+  /** Which source the runtime and the model actually came from (CDN or the app's own copy). */
+  sources = { wasm: '', model: '' };
   error = '';
   loadMs = 0;
   progress = { bytes: 0, total: 0 };
@@ -27,19 +29,23 @@ export class HandTracker {
 
   readonly kind: ModelKind;
 
-  constructor(wasmBase: string, modelUrl: string, kind: ModelKind = 'landmarker') {
+  constructor(wasmBases: string[], modelUrls: string[], kind: ModelKind = 'landmarker') {
     this.kind = kind;
     this.worker = new Worker(new URL('./hand-worker.ts', import.meta.url));
     this.worker.addEventListener('message', (e: MessageEvent<FromWorker>) => this.handle(e.data));
     this.worker.addEventListener('error', (e) => { this.error = e.message || 'o detector de mão não iniciou'; });
-    this.send({ type: 'init', wasmBase: new URL(wasmBase, location.href).href, modelUrl: new URL(modelUrl, location.href).href, kind });
+    const abs = (u: string) => new URL(u, location.href).href;
+    this.send({ type: 'init', wasmBases: wasmBases.map(abs), modelUrls: modelUrls.map(abs), kind });
   }
 
   private send(m: ToWorker, transfer: Transferable[] = []) { this.worker.postMessage(m, transfer); }
 
   private handle(m: FromWorker) {
     if (m.type === 'progress') this.progress = { bytes: m.bytes, total: m.total };
-    else if (m.type === 'ready') { this.ready = true; this.delegate = m.delegate; this.loadMs = m.ms; }
+    else if (m.type === 'ready') {
+      this.ready = true; this.delegate = m.delegate; this.loadMs = m.ms;
+      this.sources = { wasm: m.wasmFrom, model: m.modelFrom };
+    }
     else if (m.type === 'error') this.error = m.message;
     else if (m.type === 'result') {
       this.busy = false;

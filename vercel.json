@@ -3,15 +3,8 @@
   "framework": "vite",
   "rewrites": [
     {
-      "source": "/d/:id",
-      "destination": "/api/d?id=:id"
-    }
-  ],
-  "redirects": [
-    {
       "source": "/",
-      "destination": "/camera/",
-      "permanent": false
+      "destination": "/camera/index.html"
     }
   ]
 }

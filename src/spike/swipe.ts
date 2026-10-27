@@ -12,7 +12,7 @@ const distSel = $<HTMLSelectElement>('#dist');
 const cursorSel = $<HTMLSelectElement>('#cursorMode');
 declare const __BUILD__: string;
 
-const tracker = new HandTracker('/mediapipe/wasm', '/mediapipe/hand_landmarker.task');
+const tracker = new HandTracker(['/mediapipe/wasm'], ['/mediapipe/hand_landmarker.task']);
 const video = document.createElement('video');
 video.playsInline = true; video.muted = true;
 

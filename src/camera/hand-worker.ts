@@ -10,12 +10,12 @@ export type ModelKind = 'gesture' | 'landmarker';
 export type Gesture = { name: string; score: number };
 
 export type ToWorker =
-  | { type: 'init'; wasmBase: string; modelUrl: string; kind: ModelKind }
+  | { type: 'init'; wasmBases: string[]; modelUrls: string[]; kind: ModelKind }
   | { type: 'frame'; frame: ImageBitmap | VideoFrame; t: number };
 
 export type FromWorker =
   | { type: 'progress'; bytes: number; total: number }
-  | { type: 'ready'; delegate: 'GPU' | 'CPU'; ms: number }
+  | { type: 'ready'; delegate: 'GPU' | 'CPU'; ms: number; wasmFrom: string; modelFrom: string }
   | { type: 'error'; message: string }
   | { type: 'result'; t: number; ms: number; landmarks: Pt[] | null; gesture: Gesture | null; error?: string };
 
@@ -35,42 +35,67 @@ function describe(e: unknown): string {
   try { return JSON.stringify(e); } catch { return String(e); }
 }
 
+/** Downloads the model from the first source that answers, reporting progress. */
+async function fetchModel(urls: string[]): Promise<{ model: Uint8Array; from: string }> {
+  let lastError: unknown;
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const total = Number(res.headers.get('content-length')) || 0;
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let bytes = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); bytes += value.length;
+        post({ type: 'progress', bytes, total });
+      }
+      const model = new Uint8Array(bytes);
+      let off = 0;
+      for (const c of chunks) { model.set(c, off); off += c.length; }
+      return { model, from: url };
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw new Error(`modelo: ${describe(lastError)}`);
+}
+
 async function init(msg: Extract<ToWorker, { type: 'init' }>) {
   const t0 = performance.now();
-  const fileset = await FilesetResolver.forVisionTasks(msg.wasmBase);
+  const { model, from: modelFrom } = await fetchModel(msg.modelUrls);
 
-  const res = await fetch(msg.modelUrl);
-  if (!res.ok || !res.body) throw new Error(`modelo: HTTP ${res.status}`);
-  const total = Number(res.headers.get('content-length')) || 0;
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value); bytes += value.length;
-    post({ type: 'progress', bytes, total });
-  }
-  const model = new Uint8Array(bytes);
-  let off = 0;
-  for (const c of chunks) { model.set(c, off); off += c.length; }
-
-  const create = async (delegate: 'GPU' | 'CPU') => {
+  const create = async (fileset: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>, delegate: 'GPU' | 'CPU') => {
     const options = { baseOptions: { modelAssetBuffer: model, delegate }, runningMode: 'VIDEO' as const, numHands: 1 };
     if (msg.kind === 'gesture') recognizer = await GestureRecognizer.createFromOptions(fileset, options);
     else landmarker = await HandLandmarker.createFromOptions(fileset, options);
   };
-  let delegate: 'GPU' | 'CPU' = 'GPU';
-  try {
-    await Promise.race([
-      create('GPU'),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('GPU timeout')), GPU_TIMEOUT_MS)),
-    ]);
-  } catch {
-    await create('CPU');
-    delegate = 'CPU';
+
+  // The WASM runtime is fetched when the task is created, so a dead CDN shows up here:
+  // try each source in order, GPU first and CPU as a fallback for each.
+  let lastError: unknown;
+  for (const base of msg.wasmBases) {
+    const fileset = await FilesetResolver.forVisionTasks(base);
+    try {
+      let delegate: 'GPU' | 'CPU' = 'GPU';
+      try {
+        await Promise.race([
+          create(fileset, 'GPU'),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('GPU timeout')), GPU_TIMEOUT_MS)),
+        ]);
+      } catch {
+        await create(fileset, 'CPU');
+        delegate = 'CPU';
+      }
+      post({ type: 'ready', delegate, ms: Math.round(performance.now() - t0), wasmFrom: base, modelFrom });
+      return;
+    } catch (e) {
+      lastError = e;
+    }
   }
-  post({ type: 'ready', delegate, ms: Math.round(performance.now() - t0) });
+  throw new Error(`motor: ${describe(lastError)}`);
 }
 
 scope.addEventListener('message', (e) => {

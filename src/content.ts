@@ -52,12 +52,29 @@ export const PARIS_AFTER = [
 
 /** Toasts when a bus with no 13 sticker goes out: it could have left all along. */
 export const CLEAN_BUS_TOASTS = [
-  'Esse nem tinha adesivo. Tava parado por quê?',
-  'Limpinho desde as 6h. E na garagem.',
-  'Sem 13, sem desculpa.',
-  'Mais um sem adesivo esperando ordem.',
-  'Zero adesivo. Qual era o problema mesmo?',
+  'Esse nem tinha adesivo. Baratino!',
+  'Sem adesivo e parado. Que baratino é esse?',
+  'Limpinho desde as 6h. O baratino sobe.',
+  'Sem 13, sem desculpa. Só baratino.',
+  'Adesivo nenhum. Baratino da Semob +1.',
 ];
+
+/**
+ * Baratinômetro levels, in Bahian slang for a flimsy excuse ("baratino"). Driven by the number
+ * of buses with no 13 sticker the player releases: each one makes the sticker excuse flimsier.
+ */
+export const BARATINO_LEVELS: [number, string][] = [
+  [1, 'Migué'],
+  [4, 'Quatchá quatchá'],
+  [7, 'Baratino master'],
+];
+
+/** Level name for a clean-bus count, or '' before the first one. */
+export function baratinoLevel(cleanBuses: number) {
+  let name = '';
+  for (const [min, label] of BARATINO_LEVELS) if (cleanBuses >= min) name = label;
+  return name;
+}
 
 export interface ClockEvent { at: number; text: string; unlock?: boolean; arrest?: boolean }
 

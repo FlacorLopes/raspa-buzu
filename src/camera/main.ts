@@ -5,7 +5,7 @@ import {
   AUTO_RELEASE_MS, BUS_CAPACITY, ENTER_MS, EV, EXIT_MS, GAME_MS, MIN_SCRAPE_GAP_MS, RETIDOS,
   UNLOCK_MS, busSpec, randomSeed, type BusSpec, type RunEvent,
 } from '../sim.ts';
-import { ACCESS_TOAST, CLEAN_BUS_TOASTS, DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, clockMinutes, clockText, rankFor } from '../content.ts';
+import { ACCESS_TOAST, CLEAN_BUS_TOASTS, DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, baratinoLevel, clockMinutes, clockText, rankFor } from '../content.ts';
 import { HandTracker, OneEuro, isThumbUp, type Pt } from './hands.ts';
 import { ThumbGate } from './thumb-gate.ts';
 import { Sfx } from './audio.ts';
@@ -206,10 +206,13 @@ function tryRelease() {
     if (t < UNLOCK_MS) { blocked++; sfx?.bad(); toast('Regra da Semob: com adesivo do 13 não sai. Raspa!'); return; }
     forced++; leave(t, 'forced'); return;
   }
-  // A bus with no 13 sticker: it could have left all along. Feeds the baratinômetro.
+  // A bus with no 13 sticker: it could have left all along. Feeds the baratinômetro
+  // ("baratino": Bahian slang for a flimsy excuse).
+  const levelBefore = baratinoLevel(passed);
   passed++;
   barataFlash = performance.now() + 700;
-  toast(CLEAN_BUS_TOASTS[(passed - 1) % CLEAN_BUS_TOASTS.length]);
+  const levelNow = baratinoLevel(passed);
+  toast(levelNow !== levelBefore ? `Baratinômetro: ${levelNow}!` : CLEAN_BUS_TOASTS[(passed - 1) % CLEAN_BUS_TOASTS.length]);
   leave(t, 'pass');
 }
 
@@ -405,16 +408,25 @@ function drawHud() {
   const lit = performance.now() < barataFlash;
   cols.forEach(([label, value], i) => {
     const x = 24 + i * 176;
-    ctx.fillStyle = i === 3 && lit ? '#7CFC9A' : '#9ba5a4'; ctx.font = '700 20px Archivo, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillStyle = i === 3 && lit ? '#ff6b5e' : '#9ba5a4'; ctx.font = '700 20px Archivo, sans-serif'; ctx.textAlign = 'left';
     ctx.fillText(label, x, 40, i === 3 ? 160 : 170);
-    ctx.fillStyle = i === 2 ? '#f3f1ea' : i === 3 ? (lit ? '#7CFC9A' : '#4ade80') : '#ffae1a';
+    if (i === 3) return;   // the baratinômetro draws its own gauge below
+    ctx.fillStyle = i === 2 ? '#f3f1ea' : '#ffae1a';
     ctx.font = '400 58px VT323, monospace'; ctx.fillText(value, x, 94);
   });
-  // Baratinômetro gauge: one notch per clean bus that could have left all along.
-  const gx = 24 + 3 * 176 + 54, gw = 100, notches = 10, filled = Math.min(notches, passed);
+  // Baratinômetro: how flimsy the Semob's sticker excuse looks. One notch per clean bus,
+  // yellow to red, with the Bahian level name (migué, quatchá quatchá, baratino master) below.
+  const gx = 24 + 3 * 176, gw = 160, notches = 10, filled = Math.min(notches, passed);
   for (let n = 0; n < notches; n++) {
-    ctx.fillStyle = n < filled ? (lit ? '#7CFC9A' : '#4ade80') : 'rgba(255,255,255,0.15)';
-    ctx.fillRect(gx + n * (gw / notches), 68, gw / notches - 3, 26);
+    const hue = 50 - (n / (notches - 1)) * 50;           // 50 = yellow, 0 = red
+    ctx.fillStyle = n < filled ? `hsl(${hue} 95% ${lit ? 62 : 52}%)` : 'rgba(255,255,255,0.15)';
+    ctx.fillRect(gx + n * (gw / notches), 50, gw / notches - 3, 22);
+  }
+  const level = baratinoLevel(passed);
+  if (level) {
+    ctx.fillStyle = lit ? '#ff6b5e' : passed >= 7 ? '#ff8d84' : '#f5c518';
+    ctx.font = '400 22px Bungee, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(level.toUpperCase(), gx, 102, gw);
   }
 }
 
@@ -478,7 +490,7 @@ function drawEndCard() {
   const m = paceMinutes(), rip = ripAvgSec();
   ctx.fillStyle = '#ffae1a'; ctx.font = '400 46px VT323, monospace';
   const lines = [
-    `Baratinômetro: ${passed} sem adesivo, parados à toa.`,
+    passed > 0 ? `Baratinômetro: ${baratinoLevel(passed)} (${passed} sem adesivo).` : 'Baratinômetro: zerado.',
     rip !== null ? `Tirar o adesivo: ${fmt1(rip)} s.` : '',
     m !== null ? `No meu ritmo: 75 ônibus em ${fmt1(m)} min.` : '',
     'Procon-BA: 944 ônibus parados.',
@@ -526,7 +538,7 @@ async function finish() {
   $<HTMLElement>('#eRank').textContent = rankFor(score);
   const m = paceMinutes(), rip = ripAvgSec();
   const parts: string[] = [];
-  if (passed > 0) parts.push(`Baratinômetro: ${buses(passed)} ${passed === 1 ? 'nem tinha' : 'nem tinham'} adesivo do 13 e ${passed === 1 ? 'saiu' : 'saíram'} num joinha. Por que ${passed === 1 ? 'estava parado' : 'estavam parados'}?`);
+  if (passed > 0) parts.push(`Baratinômetro no ${baratinoLevel(passed)}: ${buses(passed)} ${passed === 1 ? 'nem tinha' : 'nem tinham'} adesivo do 13 e ${passed === 1 ? 'saiu' : 'saíram'} num joinha. Que desculpa era essa?`);
   if (rip !== null) parts.push(`Tirar cada adesivo levou ${fmt1(rip)} s em média.`);
   if (m !== null) parts.push(`No seu ritmo, os ${RETIDOS} ônibus que a prefeitura admite estariam na rua em ${fmt1(m)} minutos.`);
   parts.push('O Procon-BA contou 944 ônibus parados em 9 garagens, e às 15h30 ainda havia garagem lotada.');
@@ -550,7 +562,7 @@ function shareText() {
   const rip = ripAvgSec();
   const ripText = rip !== null ? ` Tirar o adesivo levou ${fmt1(rip)} s.` : '';
   const pace = m !== null ? ` No meu ritmo, os ${RETIDOS} ônibus retidos em Salvador estariam na rua em ${fmt1(m)} minutos.` : '';
-  const clean = passed > 0 ? ` ${buses(passed)} nem tinham adesivo.` : '';
+  const clean = passed > 0 ? ` ${buses(passed)} nem tinham adesivo: baratinômetro no ${baratinoLevel(passed)}.` : '';
   return `🚌 Botei ${buses(score)} na rua em 60 segundos no Raspa Buzu.${clean}${ripText}${pace} O Procon contou 944 ônibus parados. Duvido você. ${SHARE_URL}/camera/`;
 }
 

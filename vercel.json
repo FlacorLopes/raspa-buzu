@@ -1,5 +1,17 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "rewrites": [{ "source": "/d/:id", "destination": "/api/d?id=:id" }]
+  "rewrites": [
+    {
+      "source": "/d/:id",
+      "destination": "/api/d?id=:id"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/spike/camera.html",
+      "permanent": false
+    }
+  ]
 }

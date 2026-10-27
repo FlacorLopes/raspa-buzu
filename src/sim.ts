@@ -13,9 +13,12 @@ export const AUTO_RELEASE_MS = 140;
 export const UNLOCK_MS = Math.round(((12 * 60 + 20 - 6 * 60) / (11 * 60)) * GAME_MS);
 /** The browser never registers two scrapes closer than this. */
 export const MIN_SCRAPE_GAP_MS = 45;
-/** "Cerca de 70% da frota", per the Semob secretary. */
-export const STICKERED_SHARE = 0.7;
-export const DECOY_SHARE = 0.15;
+/**
+ * Most buses had no candidate sticker. The game does not buy the Semob's "about 70% of the fleet"
+ * claim: 30% carry the 13, 10% a harmless non-candidate sticker, 60% nothing at all.
+ */
+export const STICKERED_SHARE = 0.3;
+export const DECOY_SHARE = 0.1;
 export const YELLOW_SHARE = 0.8;
 export const BUS_CAPACITY = 90;
 export const RETIDOS = 75;
@@ -68,8 +71,9 @@ export function busSpec(seed: number, i: number): BusSpec {
   const pick = <T,>(arr: readonly T[]) => arr[Math.floor(r() * arr.length)];
 
   const roll = r();
-  const kind: StickerKind = i < 2 ? '13' : roll < STICKERED_SHARE ? '13' : roll < STICKERED_SHARE + DECOY_SHARE ? 'decoy' : 'none';
-  const hp = i < 2 ? 2 : 2 + Math.floor(r() * 3);
+  // The first bus always has a sticker, so the round opens by teaching the scrape.
+  const kind: StickerKind = i < 1 ? '13' : roll < STICKERED_SHARE ? '13' : roll < STICKERED_SHARE + DECOY_SHARE ? 'decoy' : 'none';
+  const hp = i < 1 ? 2 : 2 + Math.floor(r() * 3);
   const decoy = Math.floor(r() * DECOY_COUNT);
 
   // Keep the sticker inside one pane of the windshield, clear of the centre pillar and wipers.

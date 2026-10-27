@@ -31,19 +31,19 @@ function botRun(seed: number, opts: { gap?: number; react?: number; forceAfterUn
   return log;
 }
 
-test('busSpec is deterministic and keeps the first buses stickered', () => {
+test('busSpec is deterministic and opens with a stickered bus', () => {
   assert.deepEqual(busSpec(42, 7), busSpec(42, 7));
   assert.notDeepEqual(busSpec(42, 7), busSpec(43, 7));
-  for (const seed of [1, 2, 3, 99999]) {
-    assert.equal(busSpec(seed, 0).kind, '13');
-    assert.equal(busSpec(seed, 1).kind, '13');
-  }
+  for (const seed of [1, 2, 3, 99999]) assert.equal(busSpec(seed, 0).kind, '13');
 });
 
-test('about 70% of buses carry a 13 sticker', () => {
-  let n = 0, total = 0;
-  for (let i = 2; i < 5000; i++) { total++; if (busSpec(7, i).kind === '13') n++; }
-  assert.ok(Math.abs(n / total - 0.7) < 0.03, `share ${n / total}`);
+test('most buses carry no sticker at all', () => {
+  const count = { '13': 0, decoy: 0, none: 0 };
+  const total = 5000;
+  for (let i = 1; i <= total; i++) count[busSpec(7, i).kind]++;
+  assert.ok(Math.abs(count['13'] / total - 0.3) < 0.03, `13 share ${count['13'] / total}`);
+  assert.ok(count.none / total > 0.55, `clean share ${count.none / total}`);
+  assert.ok(count.none > count['13'] + count.decoy);
 });
 
 test('a clean run replays to the expected score', () => {

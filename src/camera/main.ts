@@ -538,7 +538,7 @@ function drawTimeBar() {
 }
 
 function drawEndCard() {
-  ctx.fillStyle = 'rgba(16,19,20,0.92)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#101314'; ctx.fillRect(0, 0, W, H);
   for (let x = -40; x < W + 40; x += 48) {
     ctx.fillStyle = '#f5c518'; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 24, 0); ctx.lineTo(x - 10, 34); ctx.lineTo(x - 34, 34); ctx.fill();
   }
@@ -548,17 +548,12 @@ function drawEndCard() {
   ctx.fillStyle = '#f3f1ea'; ctx.fillText('BUZU', W / 2, 400);
   ctx.fillStyle = '#f5c518'; ctx.font = '400 260px Bungee, sans-serif'; ctx.fillText(String(score), W / 2, 700);
   ctx.fillStyle = '#f3f1ea'; ctx.font = '800 40px Archivo, sans-serif'; ctx.fillText('ônibus na rua em 1 minuto', W / 2, 770);
-  ctx.font = '400 44px Bungee, sans-serif'; ctx.fillText(rankFor(score).toUpperCase(), W / 2, 860, W - 60);
-  const m = paceMinutes(), rip = ripAvgSec();
-  ctx.fillStyle = '#ffae1a'; ctx.font = '400 46px VT323, monospace';
-  const lines = [
-    passed > 0 ? `Baratinômetro: ${baratinoLevel(passed)} (${passed} sem adesivo).` : 'Baratinômetro: zerado.',
-    rip !== null ? `Tirar o adesivo: ${fmt1(rip)} s.` : '',
-    m !== null ? `No meu ritmo: 75 ônibus em ${fmt1(m)} min.` : '',
-    'Procon-BA: 944 ônibus parados.',
-  ].filter(Boolean);
-  lines.forEach((l, i) => ctx.fillText(l, W / 2, 950 + i * 54, W - 60));
-  ctx.fillStyle = '#9ba5a4'; ctx.font = '600 30px Archivo, sans-serif'; ctx.fillText(`Sátira · ${SHARE_URL.replace(/^https?:\/\//, '')}`, W / 2, 1180);
+  const level = baratinoLevel(passed);
+  ctx.fillStyle = level ? '#ff8d84' : '#f3f1ea'; ctx.font = '400 36px Bungee, sans-serif';
+  ctx.fillText(level ? `NÍVEL DE BARATINO: ${level.toUpperCase()}` : rankFor(score).toUpperCase(), W / 2, 845, W - 50);
+  ctx.fillStyle = '#ffae1a'; ctx.font = '400 34px VT323, monospace';
+  wrap(summaryText('meu'), W - 80).forEach((l, i) => ctx.fillText(l, W / 2, 905 + i * 37));
+  ctx.fillStyle = '#9ba5a4'; ctx.font = '600 28px Archivo, sans-serif'; ctx.fillText(`Sátira · ${SHARE_URL.replace(/^https?:\/\//, '')}`, W / 2, 1245);
 }
 
 const wrapCache = new Map<string, string[]>();
@@ -588,6 +583,17 @@ const paceMinutes = () => (scraped > 0 ? (RETIDOS * ROUND_MS) / scraped / 60_000
 const ripAvgSec = () => (ripMs.length ? ripMs.reduce((a, b) => a + b, 0) / ripMs.length / 1000 : null);
 const buses = (n: number) => `${n} ônibus`;
 
+/** End-of-round summary (user's wording), shared by the end screen ("seu") and the video card ("meu"). */
+function summaryText(who: 'seu' | 'meu') {
+  const m = paceMinutes(), rip = ripAvgSec();
+  const parts: string[] = [];
+  if (passed > 0) parts.push(`${buses(passed)} ${passed === 1 ? 'nem tinha adesivo e mesmo assim demorou de sair' : 'nem tinham adesivo e mesmo assim demoraram de sair'}. Que desculpa era essa?`);
+  if (rip !== null) parts.push(`Tirar cada adesivo aqui no jogo levou ${fmt1(rip)} s em média.`);
+  if (m !== null) parts.push(`No ${who} ritmo, os ${RETIDOS} ônibus que a prefeitura admite estariam na rua em ${fmt1(m)} minutos.`);
+  parts.push('O Procon-BA contou 944 ônibus parados em 9 garagens, e às 15h30 ainda havia garagem lotada.');
+  return parts.join(' ');
+}
+
 // ---------- end screen ----------
 let lastFile: File | null = null;
 
@@ -598,20 +604,14 @@ async function finish() {
   const endEl = $<HTMLElement>('#end');
   $<HTMLElement>('#eScore').textContent = String(score);
   $<HTMLElement>('#eRank').textContent = rankFor(score);
-  const m = paceMinutes(), rip = ripAvgSec();
-  const parts: string[] = [];
-  if (passed > 0) parts.push(`${buses(passed)} ${passed === 1 ? 'nem tinha adesivo e mesmo assim demorou de sair' : 'nem tinham adesivo e mesmo assim demoraram de sair'}. Que desculpa era essa?`);
-  if (rip !== null) parts.push(`Tirar cada adesivo aqui no jogo levou ${fmt1(rip)} s em média.`);
-  if (m !== null) parts.push(`No seu ritmo, os ${RETIDOS} ônibus que a prefeitura admite estariam na rua em ${fmt1(m)} minutos.`);
-  parts.push('O Procon-BA contou 944 ônibus parados em 9 garagens, e às 15h30 ainda havia garagem lotada.');
   const eLine = $<HTMLElement>('#eLine');
   const level = baratinoLevel(passed);
   if (level) {
     const head = document.createElement('strong');
     head.textContent = `Nível de baratino: ${level}`;
-    eLine.replaceChildren(head, document.createElement('br'), parts.join(' '));
+    eLine.replaceChildren(head, document.createElement('br'), summaryText('seu'));
   } else {
-    eLine.replaceChildren(parts.join(' '));
+    eLine.replaceChildren(summaryText('seu'));
   }
   const vid = $<HTMLVideoElement>('#eVideo');
   const share = $<HTMLButtonElement>('#eShare');
@@ -664,6 +664,7 @@ if (MOUSE) {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'w' || e.key === ' ') thumbsUp();
     if (e.key === 'p') mayorShownAt = performance.now();   // preview the mayor cameo
+    if (e.key === 'e' && mode === 'play') elapsed = ROUND_MS; // jump to the end card
   });
   cv.addEventListener('contextmenu', (e) => { e.preventDefault(); thumbsUp(); });
 }

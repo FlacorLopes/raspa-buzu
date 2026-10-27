@@ -186,7 +186,6 @@ function scrapeAlong(a: Pt & { t: number }, b: Pt & { t: number }) {
   if (bus.hp === 0) {
     scraped++;
     ripMs.push(t - bus.firstScrapeAt);
-    toast(`Adesivo fora em ${fmt1(Math.max(0.1, ripMs[ripMs.length - 1] / 1000))} s. A Semob levou das 9h30 às 12h20.`);
     sfx?.pop();
     chips(c.x, c.y, 16, '#d4251c'); chips(c.x, c.y, 6, '#ffffff');
     floaters.push({ x: c.x, y: c.y - sr, text: '+1', life: 0.9, color: '#f5c518' });

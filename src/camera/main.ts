@@ -399,7 +399,10 @@ function draw(now: number) {
   if (now < banner.until) drawBanner(banner.text);
   if (now < paris.until) drawParis(paris.text);
   if (now < toastMsg.until) drawToast(toastMsg.text);
-  if (mode === 'waiting') drawCenter(tracker.ready ? 'Mostre a mão pra câmera' : `Carregando o detector… ${loadPct()}`);
+  if (mode === 'waiting') {
+    drawCenter(tracker.error ? 'Não deu pra carregar o detector. Recarregue a página.'
+      : tracker.ready ? 'Mostre a mão pra câmera' : `Carregando o detector… ${loadPct()}`);
+  }
   if (mode === 'countdown') drawCenter(String(Math.max(1, 3 - Math.floor((now - countdownStart) / 800))), 200);
   if (mode === 'play') drawTimeBar();
   if (mode === 'endcard') drawEndCard();
@@ -715,16 +718,34 @@ if (MOUSE) {
 }
 
 // ---------- start ----------
-$<HTMLButtonElement>('#startBtn').addEventListener('click', async () => {
-  const btn = $<HTMLButtonElement>('#startBtn');
-  btn.disabled = true;
+// In-app browsers (Instagram, Facebook, LinkedIn...) often refuse the camera outright.
+const IN_APP = /FBAN|FBAV|Instagram|LinkedInApp|Line\/|Twitter|TikTok|musical_ly|Snapchat/i.test(navigator.userAgent);
+
+function cameraErrorText(e: unknown) {
+  const name = e instanceof DOMException ? e.name : '';
+  const openOutside = 'Se abriu o link por Instagram, Facebook ou LinkedIn, toque nos três pontinhos e escolha “Abrir no navegador”.';
+  if (!navigator.mediaDevices?.getUserMedia) return `Este navegador não liberou a câmera. ${openOutside}`;
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return `A câmera está bloqueada. Toque no ícone ao lado do endereço, permita a câmera e tente de novo. ${IN_APP ? openOutside : ''}`.trim();
+  }
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'Não encontramos uma câmera frontal neste aparelho.';
+  if (name === 'NotReadableError' || name === 'AbortError') return 'A câmera está em uso por outro app. Feche o outro app e tente de novo.';
+  return `Não deu pra abrir a câmera. ${IN_APP ? openOutside : 'Recarregue a página e tente de novo.'}`;
+}
+
+const startBtn = $<HTMLButtonElement>('#startBtn');
+const startErr = $<HTMLElement>('#startErr');
+startBtn.addEventListener('click', async () => {
+  startBtn.disabled = true;
+  startErr.hidden = true;
   sfx = new Sfx(); sfx.resume();
   void sfx.loadMusic(musicUrl);     // ~0.9 MB, fetched while the player sets up the camera
   try {
     if (!MOUSE) await startCamera();
   } catch (e) {
-    btn.disabled = false;
-    $<HTMLElement>('#startErr').textContent = 'Não deu pra abrir a câmera. Libere o acesso nas permissões do navegador e tente de novo.';
+    startBtn.disabled = false;
+    startErr.textContent = cameraErrorText(e);
+    startErr.hidden = false;
     return;
   }
   try { await (navigator as Navigator & { wakeLock?: { request(t: string): Promise<unknown> } }).wakeLock?.request('screen'); } catch { /* optional */ }
@@ -733,12 +754,9 @@ $<HTMLButtonElement>('#startBtn').addEventListener('click', async () => {
   mode = 'waiting';
 });
 
-function introStatus() {
-  const el = $<HTMLElement>('#loadStatus');
-  if (tracker.error) el.textContent = `O detector de mão falhou: ${tracker.error}`;
-  else if (tracker.ready) el.textContent = 'Detector pronto.';
-  else el.textContent = `Carregando o detector de mão… ${loadPct()}`;
-}
+// The button ships disabled ("Carregando…") so an early tap, before this script runs, is not lost.
+startBtn.disabled = false;
+startBtn.textContent = 'Ligar câmera';
 
 // ---------- loop ----------
 let lastT = performance.now(), lastDraw = 0;
@@ -751,7 +769,6 @@ function loop() {
     const t0 = performance.now();
     draw(now);
     if (DEBUG) { drawTimes.push(performance.now() - t0); if (drawTimes.length > 30) drawTimes.shift(); }
-    if (mode === 'intro') introStatus();
   }
   requestAnimationFrame(loop);
 }

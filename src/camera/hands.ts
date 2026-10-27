@@ -14,9 +14,14 @@ export class HandTracker {
   /** Called with the 21 landmarks (0..1, camera space, not mirrored) or null when no hand. */
   onResult: (landmarks: Pt[] | null, at: number) => void = () => {};
 
+  /** How frames reach the worker: VideoFrame avoids a copy; ImageBitmap is the fallback. */
+  source: 'VideoFrame' | 'ImageBitmap' = typeof VideoFrame === 'function' ? 'VideoFrame' : 'ImageBitmap';
+
   private worker: Worker;
   private busy = false;
   private stamps: number[] = [];
+  private inferMs: number[] = [];
+  private latencyMs: number[] = [];
 
   constructor(wasmBase: string, modelUrl: string) {
     this.worker = new Worker(new URL('./hand-worker.ts', import.meta.url));
@@ -33,9 +38,11 @@ export class HandTracker {
     else if (m.type === 'error') this.error = m.message;
     else if (m.type === 'result') {
       this.busy = false;
+      if (m.error && this.source === 'VideoFrame') { this.source = 'ImageBitmap'; return; }
       const now = performance.now();
-      this.stamps.push(now);
-      if (this.stamps.length > 30) this.stamps.shift();
+      push(this.stamps, now);
+      push(this.inferMs, m.ms);
+      push(this.latencyMs, now - m.t);   // camera frame grabbed -> landmarks back
       this.onResult(m.landmarks, now);
     }
   }
@@ -44,13 +51,18 @@ export class HandTracker {
   async pump(video: HTMLVideoElement) {
     if (!this.ready || this.busy || video.readyState < 2) return;
     this.busy = true;
+    const t = performance.now();
     try {
-      const bitmap = await createImageBitmap(video);
-      this.send({ type: 'frame', bitmap, t: performance.now() }, [bitmap]);
+      const frame = this.source === 'VideoFrame' ? new VideoFrame(video, { timestamp: Math.round(t * 1000) }) : await createImageBitmap(video);
+      this.send({ type: 'frame', frame, t }, [frame]);
     } catch {
+      if (this.source === 'VideoFrame') this.source = 'ImageBitmap';
       this.busy = false;
     }
   }
+
+  /** Median inference time and median frame-to-result latency, in ms. */
+  timings() { return { inferMs: median(this.inferMs), latencyMs: median(this.latencyMs) }; }
 
   /** Detections per second over the last ~30 results. */
   fps() {
@@ -59,12 +71,24 @@ export class HandTracker {
   }
 }
 
+function push(arr: number[], v: number) { arr.push(v); if (arr.length > 30) arr.shift(); }
+function median(arr: number[]) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+
 /** One Euro filter: smooths a jittery signal without adding much lag on fast moves. */
 export class OneEuro {
   private x: number | null = null;
   private dx = 0;
   private t = 0;
-  constructor(private minCutoff = 1.2, private beta = 0.02, private dCutoff = 1) {}
+  private minCutoff: number;
+  private beta: number;
+  private dCutoff: number;
+  constructor(minCutoff = 1.2, beta = 0.02, dCutoff = 1) {
+    this.minCutoff = minCutoff; this.beta = beta; this.dCutoff = dCutoff;
+  }
   private alpha(cutoff: number, dt: number) { const tau = 1 / (2 * Math.PI * cutoff); return 1 / (1 + tau / dt); }
   filter(v: number, tMs: number) {
     if (this.x === null) { this.x = v; this.t = tMs; return v; }
@@ -76,6 +100,23 @@ export class OneEuro {
     return this.x;
   }
   reset() { this.x = null; }
+}
+
+/**
+ * Thumbs-up 👍: thumb stretched upward and the highest point of the hand, other fingers folded.
+ * A static pose, so it survives the low detection rate that broke the wave gesture.
+ */
+export function isThumbUp(lm: Pt[]) {
+  const w = lm[0];
+  const d = (a: Pt) => Math.hypot(a.x - w.x, a.y - w.y);
+  const palmSize = d(lm[9]) || 1;
+  let folded = 0;
+  for (const [tip, pip] of [[8, 6], [12, 10], [16, 14], [20, 18]]) if (d(lm[tip]) < d(lm[pip]) * 1.1) folded++;
+  const thumbTip = lm[4], thumbIp = lm[3], thumbMcp = lm[2];
+  const pointsUp = thumbTip.y < thumbIp.y && thumbIp.y < thumbMcp.y;
+  const longEnough = thumbMcp.y - thumbTip.y > palmSize * 0.45;
+  const highest = lm.every((p, i) => i === 4 || p.y >= thumbTip.y);
+  return folded >= 3 && pointsUp && longEnough && highest;
 }
 
 /** Open palm: at least four fingertips clearly farther from the wrist than their middle joints. */

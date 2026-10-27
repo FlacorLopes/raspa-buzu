@@ -1,12 +1,12 @@
 // Raspa Buzu, camera mode: scrape the 13 sticker off the windshield with your finger,
-// wave the bus out, and get a shareable video of the round.
+// thumbs-up the bus out, and get a shareable video of the round.
 
 import {
   AUTO_RELEASE_MS, BUS_CAPACITY, ENTER_MS, EV, EXIT_MS, GAME_MS, MIN_SCRAPE_GAP_MS, RETIDOS,
   UNLOCK_MS, busSpec, randomSeed, type BusSpec, type RunEvent,
 } from '../sim.ts';
 import { ACCESS_TOAST, DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, clockMinutes, clockText, rankFor } from '../content.ts';
-import { HandTracker, OneEuro, isOpenPalm, type Pt } from './hands.ts';
+import { HandTracker, OneEuro, isThumbUp, type Pt } from './hands.ts';
 import { Sfx } from './audio.ts';
 import { CanvasRecorder } from './recorder.ts';
 import { accessCenter, drawBusFront, stickerCenter, stickerRadius, type Rect } from './bus-art.ts';
@@ -14,10 +14,15 @@ import { accessCenter, drawBusFront, stickerCenter, stickerRadius, type Rect } f
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 const cv = $<HTMLCanvasElement>('#cv');
 const ctx = cv.getContext('2d')!;
-const W = cv.width, H = cv.height;
+/** Game coordinates are 720x1280; the canvas is smaller (cheaper to draw and to encode). */
+const W = 720, H = 1280;
+const S = cv.width / W;
 const RENDER_CAP = 30;              // leaves GPU time for the detector (see spike results)
 const END_CARD_MS = 2500;
 const SHARE_URL = location.origin;
+const DEBUG = new URLSearchParams(location.search).has('debug');
+/** ?rec=0 turns recording off, to measure what it costs on a given phone. */
+const RECORD = new URLSearchParams(location.search).get('rec') !== '0';
 // Test aids: ?mouse=1 lets the pointer play the fingertip; with it, ?speed=N fast-forwards the clock.
 const QS = new URLSearchParams(location.search);
 const MOUSE = QS.has('mouse');
@@ -95,32 +100,40 @@ async function startCamera() {
 }
 
 // ---------- hand input ----------
-const fx = new OneEuro(), fy = new OneEuro();
+// Hit tests use the raw fingertip: smoothing it costs ~100-150 ms at 6-9 detections/s.
+// Only the drawn cursor is smoothed, and it is projected ahead to hide the detection gap.
+const fx = new OneEuro(2.5, 0.05), fy = new OneEuro(2.5, 0.05);
 let tip: (Pt & { t: number }) | null = null;
-let cursor: Pt | null = null;
+let vel = { x: 0, y: 0 };
 let handSince = 0;
-let pathAcc = 0;
-const wrist: { x: number; t: number; open: boolean }[] = [];
-let waveCooldown = 0;
+let thumbFrames = 0;
+let thumbCooldown = 0;
+const THUMB_FRAMES = 2;          // consecutive detections showing 👍 (~0.25 s on the A17)
 
 tracker.onResult = (lm, now) => {
-  if (!lm) { tip = null; fx.reset(); fy.reset(); handSince = 0; wrist.length = 0; return; }
+  if (!lm) { tip = null; fx.reset(); fy.reset(); handSince = 0; thumbFrames = 0; return; }
   if (!handSince) handSince = now;
-  const raw = toCanvas(lm[8]);
-  const p = { x: fx.filter(raw.x, now), y: fy.filter(raw.y, now), t: now };
-  if (tip && interactive()) scrapeAlong(tip, p);
+  const p = { ...toCanvas(lm[8]), t: now };
+  if (tip) {
+    const dt = Math.max(1, now - tip.t);
+    vel = { x: (p.x - tip.x) / dt, y: (p.y - tip.y) / dt };
+    if (interactive()) scrapeAlong(tip, p);
+  }
   tip = p;
-  if (!cursor) cursor = { x: p.x, y: p.y };
 
-  const wr = toCanvas(lm[0]);
-  wrist.push({ x: wr.x, t: now, open: isOpenPalm(lm) });
-  while (wrist.length && now - wrist[0].t > 650) wrist.shift();
-  if (interactive() && now > waveCooldown && wrist.length >= 3) {
-    const openShare = wrist.filter((w) => w.open).length / wrist.length;
-    const dx = wrist[wrist.length - 1].x - wrist[0].x;
-    if (openShare >= 0.5 && Math.abs(dx) > W * 0.22) { waveCooldown = now + 900; wrist.length = 0; tryRelease(); }
+  thumbFrames = isThumbUp(lm) ? thumbFrames + 1 : 0;
+  if (thumbFrames >= THUMB_FRAMES && interactive() && now > thumbCooldown) {
+    thumbCooldown = now + 1000; thumbFrames = 0;
+    tryRelease();
   }
 };
+
+/** Drawn cursor: last fingertip projected along its velocity for up to one detection gap. */
+function cursorPos(now: number) {
+  if (!tip) return null;
+  const ahead = Math.min(now - tip.t, 120);
+  return { x: fx.filter(tip.x + vel.x * ahead, now), y: fy.filter(tip.y + vel.y * ahead, now) };
+}
 
 function segDist(px: number, py: number, a: Pt, b: Pt) {
   const vx = b.x - a.x, vy = b.y - a.y, len2 = vx * vx + vy * vy || 1;
@@ -128,11 +141,11 @@ function segDist(px: number, py: number, a: Pt, b: Pt) {
   return Math.hypot(px - (a.x + k * vx), py - (a.y + k * vy));
 }
 
+/** Every detection whose movement crosses the sticker counts as one scrape. */
 function scrapeAlong(a: Pt & { t: number }, b: Pt & { t: number }) {
   const r = busRect(), sr = stickerRadius(r);
   const dist = Math.hypot(b.x - a.x, b.y - a.y);
-  const speed = dist / Math.max(1, b.t - a.t);       // px/ms on the 720px canvas
-  if (speed < 0.25) return;
+  if (dist / Math.max(1, b.t - a.t) < 0.15) return;   // px/ms: the finger has to be moving
   const t = Math.round(elapsed);
 
   // Penalty stickers: accessibility (always there) and non-candidate decoys.
@@ -147,10 +160,9 @@ function scrapeAlong(a: Pt & { t: number }, b: Pt & { t: number }) {
 
   if (bus.spec.kind !== '13' || bus.hp <= 0) return;
   const c = stickerCenter(r, bus.spec);
-  if (segDist(c.x, c.y, a, b) > sr * 1.35) return;
-  pathAcc += dist;
-  if (pathAcc < sr * 1.1 || t - lastScrapeT < MIN_SCRAPE_GAP_MS) return;
-  pathAcc = 0; lastScrapeT = t;
+  if (segDist(c.x, c.y, a, b) > sr * 1.6) return;
+  if (t - lastScrapeT < MIN_SCRAPE_GAP_MS) return;
+  lastScrapeT = t;
   bus.hp--;
   events.push([t, EV.SCRAPE]);
   sfx?.scrape();
@@ -241,20 +253,19 @@ function update(dt: number, now: number) {
   particles = particles.filter((p) => p.life > 0);
   for (const f of floaters) { f.life -= dt; f.y -= 60 * dt; }
   floaters = floaters.filter((f) => f.life > 0);
-  if (tip && cursor) { const k = 1 - Math.exp(-dt * 23); cursor.x += (tip.x - cursor.x) * k; cursor.y += (tip.y - cursor.y) * k; }
-  else if (!tip) cursor = null;
 }
 let lastCount = 4;
 
 function startRound() {
   // The run was reset when waiting began, so the bus shown in the countdown is bus 0.
   mode = 'play';
-  recorder.start(cv, sfx?.stream);
+  if (RECORD) recorder.start(cv, sfx?.stream);
   sfx?.horn();
 }
 
 // ---------- drawing ----------
 function draw(now: number) {
+  ctx.setTransform(S, 0, 0, S, 0, 0);
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
   if (video.readyState >= 2) {
     computeMap();
@@ -267,7 +278,7 @@ function draw(now: number) {
   if (mode === 'play' || mode === 'countdown' || mode === 'waiting') {
     const r = busRect(mode === 'play' ? elapsed : bus.readyAt);
     ctx.globalAlpha = r.a;
-    drawBusFront(ctx, r, bus);
+    drawBusSprite(r);
     ctx.globalAlpha = 1;
     if (bus.releaseAt !== null && elapsed >= bus.releaseAt) stamp(r, bus.how === 'forced' ? 'SAIU ADESIVADO' : 'LIBERADO', bus.how === 'forced' ? '#d4251c' : '#1f9d55');
   }
@@ -278,7 +289,8 @@ function draw(now: number) {
     ctx.fillStyle = f.color; ctx.font = '400 56px Bungee, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x, f.y);
   }
   ctx.globalAlpha = 1;
-  if (cursor && mode !== 'endcard') drawScraper(cursor);
+  const cur = cursorPos(now);
+  if (cur && mode !== 'endcard') drawScraper(cur);
 
   drawHud();
   if (now < banner.until) drawBanner(banner.text);
@@ -288,6 +300,40 @@ function draw(now: number) {
   if (mode === 'countdown') drawCenter(String(Math.max(1, 3 - Math.floor((now - countdownStart) / 800))), 200);
   if (mode === 'play') drawTimeBar();
   if (mode === 'endcard') drawEndCard();
+  if (DEBUG) drawDebug();
+}
+
+// The bus front is vector art with text; drawing it once per bus/sticker state and blitting
+// the bitmap keeps per-frame work small. Padding leaves room for the side mirrors.
+const SPRITE_PAD = 0.15;
+let sprite: { key: string; canvas: HTMLCanvasElement } | null = null;
+function drawBusSprite(r: Rect) {
+  const key = `${seed}:${bus.spec.index}:${bus.hp}`;
+  if (!sprite || sprite.key !== key) {
+    const c = sprite?.canvas ?? document.createElement('canvas');
+    c.width = Math.round(BUS.w * (1 + 2 * SPRITE_PAD) * S);
+    c.height = Math.round(BUS.h * S);
+    const g = c.getContext('2d')!;
+    g.setTransform(S, 0, 0, S, 0, 0);
+    g.clearRect(0, 0, c.width, c.height);
+    drawBusFront(g, { x: BUS.w * SPRITE_PAD, y: 0, w: BUS.w, h: BUS.h }, bus);
+    sprite = { key, canvas: c };
+  }
+  const k = r.w / BUS.w;
+  ctx.drawImage(sprite.canvas, r.x - BUS.w * SPRITE_PAD * k, r.y, BUS.w * (1 + 2 * SPRITE_PAD) * k, r.h);
+}
+
+const drawTimes: number[] = [];
+function drawDebug() {
+  const t = tracker.timings();
+  const avg = drawTimes.length ? drawTimes.reduce((a, b) => a + b, 0) / drawTimes.length : 0;
+  const lines = [
+    `det ${tracker.fps().toFixed(1)}/s · inferência ${t.inferMs.toFixed(0)} ms · atraso ${t.latencyMs.toFixed(0)} ms`,
+    `desenho ${avg.toFixed(1)} ms · ${tracker.delegate} · ${tracker.source} · gravação ${RECORD ? 'on' : 'off'} · tela ${cv.width}x${cv.height}`,
+  ];
+  ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, H - 92, W, 72);
+  ctx.fillStyle = '#7CFC9A'; ctx.font = '400 26px VT323, monospace'; ctx.textAlign = 'left';
+  lines.forEach((l, i) => ctx.fillText(l, 12, H - 64 + i * 28));
 }
 
 function loadPct() {
@@ -392,7 +438,17 @@ function drawEndCard() {
   ctx.fillStyle = '#9ba5a4'; ctx.font = '600 30px Archivo, sans-serif'; ctx.fillText(`Sátira · ${SHARE_URL.replace(/^https?:\/\//, '')}`, W / 2, 1180);
 }
 
+const wrapCache = new Map<string, string[]>();
 function wrap(text: string, max: number) {
+  const key = `${ctx.font}|${max}|${text}`;
+  const hit = wrapCache.get(key);
+  if (hit) return hit;
+  const lines = wrapUncached(text, max);
+  if (wrapCache.size > 64) wrapCache.clear();
+  wrapCache.set(key, lines);
+  return lines;
+}
+function wrapUncached(text: string, max: number) {
   const words = text.split(' '), lines: string[] = [];
   let line = '';
   for (const w of words) {
@@ -462,12 +518,11 @@ if (MOUSE) {
     const p = pos(e);
     if (!handSince) handSince = p.t;
     if (tip && interactive() && e.buttons) scrapeAlong(tip, p);
-    tip = p;
-    if (!cursor) cursor = { x: p.x, y: p.y };
+    tip = p; vel = { x: 0, y: 0 };
   });
-  const wave = () => { if (interactive()) tryRelease(); };
-  window.addEventListener('keydown', (e) => { if (e.key === 'w' || e.key === ' ') wave(); });
-  cv.addEventListener('contextmenu', (e) => { e.preventDefault(); wave(); });
+  const thumbsUp = () => { if (interactive()) tryRelease(); };
+  window.addEventListener('keydown', (e) => { if (e.key === 'w' || e.key === ' ') thumbsUp(); });
+  cv.addEventListener('contextmenu', (e) => { e.preventDefault(); thumbsUp(); });
 }
 
 // ---------- start ----------
@@ -503,7 +558,9 @@ function loop() {
   if (now - lastDraw >= 1000 / RENDER_CAP - 2) {
     const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now; lastDraw = now;
     update(dt, now);
+    const t0 = performance.now();
     draw(now);
+    if (DEBUG) { drawTimes.push(performance.now() - t0); if (drawTimes.length > 30) drawTimes.shift(); }
     if (mode === 'intro') introStatus();
   }
   requestAnimationFrame(loop);

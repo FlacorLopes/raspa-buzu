@@ -8,13 +8,13 @@ export type Pt = { x: number; y: number };
 
 export type ToWorker =
   | { type: 'init'; wasmBase: string; modelUrl: string }
-  | { type: 'frame'; bitmap: ImageBitmap; t: number };
+  | { type: 'frame'; frame: ImageBitmap | VideoFrame; t: number };
 
 export type FromWorker =
   | { type: 'progress'; bytes: number; total: number }
   | { type: 'ready'; delegate: 'GPU' | 'CPU'; ms: number }
   | { type: 'error'; message: string }
-  | { type: 'result'; t: number; ms: number; landmarks: Pt[] | null };
+  | { type: 'result'; t: number; ms: number; landmarks: Pt[] | null; error?: string };
 
 const scope = self as unknown as {
   postMessage(m: FromWorker): void;
@@ -75,15 +75,18 @@ scope.addEventListener('message', (e) => {
     return;
   }
   if (msg.type === 'frame') {
-    if (!landmarker) { msg.bitmap.close(); post({ type: 'result', t: msg.t, ms: 0, landmarks: null }); return; }
+    if (!landmarker) { msg.frame.close(); post({ type: 'result', t: msg.t, ms: 0, landmarks: null }); return; }
     const t0 = performance.now();
     let landmarks: Pt[] | null = null;
+    let error: string | undefined;
     try {
-      const r = landmarker.detectForVideo(msg.bitmap, msg.t);
+      const r = landmarker.detectForVideo(msg.frame, msg.t);
       landmarks = r.landmarks[0]?.map((p) => ({ x: p.x, y: p.y })) ?? null;
+    } catch (e) {
+      error = describe(e);
     } finally {
-      msg.bitmap.close();
+      msg.frame.close();
     }
-    post({ type: 'result', t: msg.t, ms: performance.now() - t0, landmarks });
+    post({ type: 'result', t: msg.t, ms: performance.now() - t0, landmarks, error });
   }
 });

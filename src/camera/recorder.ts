@@ -16,10 +16,10 @@ export class CanvasRecorder {
 
   start(canvas: HTMLCanvasElement, audio?: MediaStream) {
     if (!this.mime) return;
-    const stream = canvas.captureStream(30);
+    const stream = canvas.captureStream(24);
     audio?.getAudioTracks().forEach((t) => stream.addTrack(t));
     this.chunks = [];
-    this.rec = new MediaRecorder(stream, { mimeType: this.mime, videoBitsPerSecond: 2_500_000 });
+    this.rec = new MediaRecorder(stream, { mimeType: this.mime, videoBitsPerSecond: 2_000_000 });
     this.rec.ondataavailable = (e) => { if (e.data.size) this.chunks.push(e.data); };
     this.rec.start(500);
   }

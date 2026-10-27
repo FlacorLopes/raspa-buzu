@@ -3,7 +3,14 @@
 
 import { FilesetResolver, HandLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision';
 
-const MODEL_URL = '/mediapipe/hand_landmarker.task';
+const MODEL_URLS: Record<string, string> = {
+  local: '/mediapipe/hand_landmarker.task',
+  google: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+};
+/** ?m=local (default) | google picks where the model is downloaded from. */
+const MODEL_SRC = new URLSearchParams(location.search).get('m') === 'google' ? 'google' : 'local';
+const MODEL_URL = MODEL_URLS[MODEL_SRC];
+let dlBytes = 0, dlTotal = 0, dlStart = 0;
 const WASM_BASE = '/mediapipe/wasm';
 declare const __BUILD__: string;
 /** ?d=gpu | cpu | auto (default) picks the inference delegate. */
@@ -139,9 +146,21 @@ async function loadModel() {
   enter('baixando modelo');
   let model: Uint8Array;
   try {
-    const res = await fetch(MODEL_URL);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    model = new Uint8Array(await res.arrayBuffer());
+    const res = await fetch(MODEL_URL, { cache: 'no-store' });
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    dlTotal = Number(res.headers.get('content-length')) || 0;
+    dlStart = performance.now();
+    // Read in chunks so the HUD can show whether bytes are arriving at all.
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const { done: end, value } = await reader.read();
+      if (end) break;
+      chunks.push(value); dlBytes += value.length;
+    }
+    model = new Uint8Array(dlBytes);
+    let off = 0;
+    for (const c of chunks) { model.set(c, off); off += c.length; }
   } catch (e) { throw new Error(`modelo: ${describe(e)}`); }
   done(`modelo ${(model.length / 1e6).toFixed(1)}MB`);
 
@@ -192,6 +211,13 @@ async function startCamera() {
 }
 
 startBtn.addEventListener('click', startCamera);
+const modelSel = $<HTMLSelectElement>('#modelSrc');
+modelSel.value = MODEL_SRC;
+modelSel.addEventListener('change', () => {
+  const u = new URL(location.href);
+  u.searchParams.set('m', modelSel.value);
+  location.href = u.toString();
+});
 const delegateSel = $<HTMLSelectElement>('#delegate');
 delegateSel.value = ['gpu', 'cpu'].includes(DELEGATE_PREF) ? DELEGATE_PREF : 'auto';
 delegateSel.addEventListener('change', () => {
@@ -298,10 +324,11 @@ function draw(now: number) {
 function hudText() {
   const handPct = frames ? Math.round((framesWithHand / frames) * 100) : 0;
   return [
-    `versão ${__BUILD__} · modo ${DELEGATE_PREF}`,
+    `versão ${__BUILD__} · modo ${DELEGATE_PREF} · modelo de ${MODEL_SRC}`,
     landmarker
       ? `modelo ok (${delegate}, ${modelMs} ms)${gpuError ? ` · GPU falhou: ${gpuError}` : ''}`
       : lastError ? 'modelo falhou' : `${stage}… ${((performance.now() - stageStart) / 1000).toFixed(0)}s${performance.now() - stageStart > 15000 ? ' (TRAVOU AQUI?)' : ''}`,
+    stage === 'baixando modelo' || dlBytes ? `download (${MODEL_SRC}): ${(dlBytes / 1e6).toFixed(2)}${dlTotal ? ` / ${(dlTotal / 1e6).toFixed(2)}` : ''} MB · ${dlStart ? ((dlBytes / 1e6) / Math.max(0.001, (performance.now() - dlStart) / 1000)).toFixed(2) : '0'} MB/s` : '',
     stageLog.length ? `etapas: ${stageLog.join(' · ')}` : '',
     `detecção: ${rate(inferStamps).toFixed(1)} fps · ${median(inferTimes).toFixed(1)} ms/quadro (mediana)`,
     `tela: ${rate(renderStamps).toFixed(0)} fps · câmera ${video.videoWidth}×${video.videoHeight}`,

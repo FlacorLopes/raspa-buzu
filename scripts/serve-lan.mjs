@@ -28,10 +28,25 @@ const server = createServer({ key: readFileSync(key), cert: readFileSync(cert) }
   let path = normalize(join(ROOT, decodeURIComponent(url.pathname)));
   if (!path.startsWith(ROOT)) { res.writeHead(403).end(); return; }
   if (existsSync(path) && statSync(path).isDirectory()) path = join(path, 'index.html');
-  if (!existsSync(path)) { res.writeHead(404).end('not found'); return; }
-  res.writeHead(200, { 'content-type': TYPES[extname(path)] ?? 'application/octet-stream', 'cache-control': 'no-store' });
-  res.end(readFileSync(path));
+  if (!existsSync(path)) { res.writeHead(404).end('not found'); log(req, 404, 0, 0); return; }
+  const body = readFileSync(path);
+  const t0 = Date.now();
+  res.writeHead(200, {
+    'content-type': TYPES[extname(path)] ?? 'application/octet-stream',
+    'content-length': body.length,
+    'cache-control': 'no-store',
+  });
+  res.end(body);
+  // 'finish' = all bytes handed to the OS; 'close' without finish = client dropped mid-transfer.
+  let finished = false;
+  res.on('finish', () => { finished = true; log(req, 200, body.length, Date.now() - t0); });
+  res.on('close', () => { if (!finished) log(req, 'ABORTED', res.socket?.bytesWritten ?? 0, Date.now() - t0); });
 });
+
+function log(req, status, bytes, ms) {
+  const who = req.socket.remoteAddress?.replace('::ffff:', '');
+  console.log(`${new Date().toISOString().slice(11, 19)} ${who} ${req.method} ${req.url} ${status} ${(bytes / 1e6).toFixed(2)}MB ${ms}ms`);
+}
 server.on('upgrade', (_req, socket) => socket.destroy());
 server.listen(PORT, '0.0.0.0', () => {
   for (const nets of Object.values(networkInterfaces())) for (const n of nets ?? [])

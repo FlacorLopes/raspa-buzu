@@ -16,6 +16,9 @@ import musicUrl from '../assets/bloquinho.mp3';
 import { Sfx } from './audio.ts';
 import { CanvasRecorder } from './recorder.ts';
 import { accessCenter, drawBusFront, stickerCenter, stickerRadius, type Rect } from './bus-art.ts';
+import { inject } from '@vercel/analytics';
+
+inject();
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 const cv = $<HTMLCanvasElement>('#cv');

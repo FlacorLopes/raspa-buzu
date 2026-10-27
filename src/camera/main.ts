@@ -7,6 +7,7 @@ import {
 } from '../sim.ts';
 import { ACCESS_TOAST, DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, clockMinutes, clockText, rankFor } from '../content.ts';
 import { HandTracker, OneEuro, isThumbUp, type Pt } from './hands.ts';
+import { ThumbGate } from './thumb-gate.ts';
 import { Sfx } from './audio.ts';
 import { CanvasRecorder } from './recorder.ts';
 import { accessCenter, drawBusFront, stickerCenter, stickerRadius, type Rect } from './bus-art.ts';
@@ -43,25 +44,29 @@ type Mode = 'intro' | 'waiting' | 'countdown' | 'play' | 'endcard' | 'end';
 let mode: Mode = 'intro';
 
 // ---------- run state (mirrors the rules in sim.ts) ----------
-interface BusState { spec: BusSpec; hp: number; enterAt: number; readyAt: number; releaseAt: number | null; how: string }
+interface BusState { spec: BusSpec; hp: number; enterAt: number; readyAt: number; releaseAt: number | null; how: string; firstScrapeAt: number | null }
 let seed = randomSeed();
 let elapsed = 0;
 let bus: BusState;
 let events: RunEvent[] = [];
+// score = buses sent out minus penalties: the headline number is buses on the street, not stickers.
 let score = 0, scraped = 0, passed = 0, forced = 0, blocked = 0, penalties = 0;
+/** How long each sticker took from the first scrape to coming off, in ms. */
+let ripMs: number[] = [];
 let voters = 300;
 let eventIdx = 0, unlocked = false, arrested = false;
 let lastScrapeT = -Infinity, penaltyCooldown = 0;
 
 function newBus(i: number, enterAt: number): BusState {
   const spec = busSpec(seed, i);
-  return { spec, hp: spec.hp, enterAt, readyAt: enterAt + ENTER_MS, releaseAt: null, how: '' };
+  return { spec, hp: spec.hp, enterAt, readyAt: enterAt + ENTER_MS, releaseAt: null, how: '', firstScrapeAt: null };
 }
 
 function resetRun() {
   seed = randomSeed();
   elapsed = 0; events = [];
   score = scraped = passed = forced = blocked = penalties = 0;
+  ripMs = [];
   voters = 300; eventIdx = 0; unlocked = false; arrested = false;
   lastScrapeT = -Infinity; penaltyCooldown = 0;
   paris = { text: '', until: 0, next: 7000, i: 0, j: 0 };
@@ -111,12 +116,13 @@ const fx = new OneEuro(2.5, 0.05), fy = new OneEuro(2.5, 0.05);
 let tip: (Pt & { t: number }) | null = null;
 let vel = { x: 0, y: 0 };
 let handSince = 0;
-let thumbFrames = 0;
-let thumbCooldown = 0;
 const THUMB_FRAMES = 2;          // consecutive detections showing 👍 (~0.25 s on the A17)
+const THUMB_GRACE_MS = 400;      // a bus must be parked this long before a 👍 can release it
+const thumbGate = new ThumbGate(THUMB_FRAMES);
+const thumbReady = () => interactive() && elapsed >= bus.readyAt + THUMB_GRACE_MS;
 
 tracker.onResult = (lm, now, gesture) => {
-  if (!lm) { tip = null; fx.reset(); fy.reset(); handSince = 0; thumbFrames = 0; return; }
+  if (!lm) { tip = null; fx.reset(); fy.reset(); handSince = 0; thumbGate.lost(); return; }
   if (!handSince) handSince = now;
   const p = { ...toCanvas(lm[8]), t: now };
   if (tip) {
@@ -129,11 +135,8 @@ tracker.onResult = (lm, now, gesture) => {
   const thumbs = tracker.kind === 'gesture'
     ? gesture?.name === 'Thumb_Up' && gesture.score >= THUMB_MIN_SCORE
     : isThumbUp(lm);
-  thumbFrames = thumbs ? thumbFrames + 1 : 0;
-  if (thumbFrames >= THUMB_FRAMES && interactive() && now > thumbCooldown) {
-    thumbCooldown = now + 1000; thumbFrames = 0;
-    tryRelease();
-  }
+  // One release per thumbs-up: the gate stays shut until the thumb drops.
+  if (thumbGate.update(thumbs, thumbReady())) tryRelease();
 };
 
 /** Drawn cursor: last fingertip projected along its velocity for up to one detection gap. */
@@ -171,12 +174,14 @@ function scrapeAlong(a: Pt & { t: number }, b: Pt & { t: number }) {
   if (segDist(c.x, c.y, a, b) > sr * 1.6) return;
   if (t - lastScrapeT < MIN_SCRAPE_GAP_MS) return;
   lastScrapeT = t;
+  if (bus.firstScrapeAt === null) bus.firstScrapeAt = t;
   bus.hp--;
   events.push([t, EV.SCRAPE]);
   sfx?.scrape();
   chips(c.x, c.y, 5, '#d4251c');
   if (bus.hp === 0) {
-    score++; scraped++;
+    scraped++;
+    ripMs.push(t - bus.firstScrapeAt);
     sfx?.pop();
     chips(c.x, c.y, 16, '#d4251c'); chips(c.x, c.y, 6, '#ffffff');
     floaters.push({ x: c.x, y: c.y - sr, text: '+1', life: 0.9, color: '#f5c518' });
@@ -196,7 +201,7 @@ function tryRelease() {
   const t = Math.round(elapsed);
   events.push([t, EV.RELEASE]);
   if (bus.spec.kind === '13' && bus.hp > 0) {
-    if (t < UNLOCK_MS) { blocked++; sfx?.bad(); toast('Com adesivo do 13 não sai. Raspa!'); return; }
+    if (t < UNLOCK_MS) { blocked++; sfx?.bad(); toast('Regra da Semob: com adesivo do 13 não sai. Raspa!'); return; }
     forced++; leave(t, 'forced'); return;
   }
   passed++; leave(t, 'pass');
@@ -204,6 +209,7 @@ function tryRelease() {
 
 function leave(at: number, how: string) {
   bus.releaseAt = at; bus.how = how;
+  score++;
   voters = Math.max(0, voters - BUS_CAPACITY);
   setTimeout(() => sfx?.horn(), Math.max(0, at - elapsed));
 }
@@ -252,7 +258,10 @@ function update(dt: number, now: number) {
       paris.until = now + 4200; sfx?.ping();
       paris.next = elapsed + (arrested ? 6000 + Math.random() * 3000 : 9000 + Math.random() * 4000);
     }
-    if (bus.releaseAt !== null && elapsed >= bus.releaseAt + EXIT_MS) bus = newBus(bus.spec.index + 1, bus.releaseAt + EXIT_MS);
+    if (bus.releaseAt !== null && elapsed >= bus.releaseAt + EXIT_MS) {
+      bus = newBus(bus.spec.index + 1, bus.releaseAt + EXIT_MS);
+      thumbGate.newBus();
+    }
     if (elapsed >= GAME_MS) { elapsed = GAME_MS; mode = 'endcard'; endcardStart = now; sfx?.horn(); }
   }
   if (mode === 'endcard' && now - endcardStart > END_CARD_MS) finish();
@@ -338,7 +347,7 @@ function drawDebug() {
   const lines = [
     `det ${tracker.fps().toFixed(1)}/s · inferência ${t.inferMs.toFixed(0)} ms · atraso ${t.latencyMs.toFixed(0)} ms`,
     `desenho ${avg.toFixed(1)} ms · ${tracker.delegate} · ${tracker.source} · gravação ${RECORD ? 'on' : 'off'} · tela ${cv.width}x${cv.height}`,
-    `modelo ${tracker.kind} · gesto ${tracker.lastGesture ? `${tracker.lastGesture.name} ${(tracker.lastGesture.score * 100).toFixed(0)}%` : '-'} · joinhas seguidos ${thumbFrames}`,
+    `modelo ${tracker.kind} · gesto ${tracker.lastGesture ? `${tracker.lastGesture.name} ${(tracker.lastGesture.score * 100).toFixed(0)}%` : '-'} · joinhas seguidos ${thumbGate.streak} (${thumbGate.isArmed ? 'armado' : 'solte o polegar'})`,
   ];
   ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, H - 120, W, 100);
   ctx.fillStyle = '#7CFC9A'; ctx.font = '400 26px VT323, monospace'; ctx.textAlign = 'left';
@@ -372,14 +381,14 @@ function drawHud() {
   ctx.fillStyle = 'rgba(10,12,12,0.82)'; ctx.fillRect(0, 0, W, 118);
   const cols = [
     ['RELÓGIO', clockText(clockMinutes(elapsed, GAME_MS))],
-    ['ADESIVOS', String(score)],
-    ['BUZUS', String(scraped + passed + forced)],
+    ['NA RUA', String(score)],
     ['NO PONTO', Math.round(voters).toLocaleString('pt-BR')],
+    ['ADESIVOS', String(scraped)],
   ];
   cols.forEach(([label, value], i) => {
     const x = 24 + i * 176;
     ctx.fillStyle = '#9ba5a4'; ctx.font = '700 20px Archivo, sans-serif'; ctx.textAlign = 'left'; ctx.fillText(label, x, 40);
-    ctx.fillStyle = i === 3 ? '#f3f1ea' : '#ffae1a'; ctx.font = '400 58px VT323, monospace'; ctx.fillText(value, x, 94);
+    ctx.fillStyle = i === 2 ? '#f3f1ea' : '#ffae1a'; ctx.font = '400 58px VT323, monospace'; ctx.fillText(value, x, 94);
   });
 }
 
@@ -438,12 +447,17 @@ function drawEndCard() {
   ctx.fillStyle = '#f5c518'; ctx.font = '400 110px Bungee, sans-serif'; ctx.fillText('RASPA', W / 2, 290);
   ctx.fillStyle = '#f3f1ea'; ctx.fillText('BUZU', W / 2, 400);
   ctx.fillStyle = '#f5c518'; ctx.font = '400 260px Bungee, sans-serif'; ctx.fillText(String(score), W / 2, 700);
-  ctx.fillStyle = '#f3f1ea'; ctx.font = '800 40px Archivo, sans-serif'; ctx.fillText('adesivos raspados com a mão', W / 2, 770);
+  ctx.fillStyle = '#f3f1ea'; ctx.font = '800 40px Archivo, sans-serif'; ctx.fillText('ônibus na rua em 60 segundos', W / 2, 770);
   ctx.font = '400 44px Bungee, sans-serif'; ctx.fillText(rankFor(score).toUpperCase(), W / 2, 860, W - 60);
-  const m = paceMinutes();
+  const m = paceMinutes(), rip = ripAvgSec();
   ctx.fillStyle = '#ffae1a'; ctx.font = '400 46px VT323, monospace';
-  ctx.fillText(m !== null ? `No meu ritmo: 75 ônibus em ${fmt1(m)} min.` : 'Nenhum adesivo. Igual a domingo.', W / 2, 970, W - 60);
-  ctx.fillText('A prefeitura: das 9h30 às 12h20.', W / 2, 1025, W - 60);
+  const lines = [
+    passed > 0 ? `${passed} nem tinham adesivo do 13.` : '',
+    rip !== null ? `Tirar o adesivo: ${fmt1(rip)} s.` : '',
+    m !== null ? `No meu ritmo: 75 ônibus em ${fmt1(m)} min.` : '',
+    'A Semob: das 9h30 às 12h20.',
+  ].filter(Boolean);
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, 950 + i * 54, W - 60));
   ctx.fillStyle = '#9ba5a4'; ctx.font = '600 30px Archivo, sans-serif'; ctx.fillText(`Sátira · ${SHARE_URL.replace(/^https?:\/\//, '')}`, W / 2, 1180);
 }
 
@@ -469,22 +483,28 @@ function wrapUncached(text: string, max: number) {
 }
 
 const fmt1 = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
-const paceMinutes = () => (score > 0 ? (RETIDOS * GAME_MS) / score / 60_000 : null);
+// Stickers removed per minute (the run mixes in clean buses, so this undersells the player).
+const paceMinutes = () => (scraped > 0 ? (RETIDOS * GAME_MS) / scraped / 60_000 : null);
+const ripAvgSec = () => (ripMs.length ? ripMs.reduce((a, b) => a + b, 0) / ripMs.length / 1000 : null);
+const buses = (n: number) => `${n} ônibus`;
 
 // ---------- end screen ----------
 let lastFile: File | null = null;
 
 async function finish() {
   mode = 'end';
-  const file = await recorder.stop(`raspa-buzu-${score}-adesivos`);
+  const file = await recorder.stop(`raspa-buzu-${score}-onibus`);
   lastFile = file;
   const endEl = $<HTMLElement>('#end');
   $<HTMLElement>('#eScore').textContent = String(score);
   $<HTMLElement>('#eRank').textContent = rankFor(score);
-  const m = paceMinutes();
-  $<HTMLElement>('#eLine').textContent = m !== null
-    ? `No seu ritmo, os ${RETIDOS} ônibus retidos estariam na rua em ${fmt1(m)} minutos. A prefeitura levou umas 3 horas.`
-    : 'Nenhum adesivo raspado. Você igualou a manhã de domingo.';
+  const m = paceMinutes(), rip = ripAvgSec();
+  const parts: string[] = [];
+  if (passed > 0) parts.push(`${buses(passed)} ${passed === 1 ? 'nem tinha' : 'nem tinham'} adesivo do 13 e ${passed === 1 ? 'saiu' : 'saíram'} num gesto.`);
+  if (rip !== null) parts.push(`Tirar cada adesivo levou ${fmt1(rip)} s em média.`);
+  if (m !== null) parts.push(`No seu ritmo, os ${RETIDOS} ônibus retidos estariam na rua em ${fmt1(m)} minutos. A Semob levou das 9h30 às 12h20.`);
+  else parts.push('Nenhum adesivo tirado. A Semob levou das 9h30 às 12h20.');
+  $<HTMLElement>('#eLine').textContent = parts.join(' ');
   const vid = $<HTMLVideoElement>('#eVideo');
   const share = $<HTMLButtonElement>('#eShare');
   const dl = $<HTMLAnchorElement>('#eDownload');
@@ -501,8 +521,10 @@ async function finish() {
 
 function shareText() {
   const m = paceMinutes();
+  const rip = ripAvgSec();
+  const ripText = rip !== null ? ` Tirar o adesivo levou ${fmt1(rip)} s.` : '';
   const pace = m !== null ? ` No meu ritmo, os ${RETIDOS} ônibus retidos em Salvador estariam na rua em ${fmt1(m)} minutos.` : '';
-  return `🚌✋ Raspei ${score} adesivos com a mão em 60 segundos no Raspa Buzu.${pace} Duvido você. ${SHARE_URL}/camera/`;
+  return `🚌 Botei ${buses(score)} na rua em 60 segundos no Raspa Buzu.${ripText}${pace} A Semob levou das 9h30 às 12h20. Duvido você. ${SHARE_URL}/camera/`;
 }
 
 $<HTMLButtonElement>('#eShare').addEventListener('click', async () => {

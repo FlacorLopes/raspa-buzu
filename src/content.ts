@@ -34,11 +34,14 @@ export interface ClockEvent { at: number; text: string; unlock?: boolean; arrest
 /** `at` is minutes since midnight on the in-game clock (06h00 to 17h00). */
 export const EVENTS: ClockEvent[] = [
   { at: 360, text: '06h · Garagem aberta. Tem adesivo no para-brisa.' },
+  { at: 420, text: 'A prefeitura tinha prometido a frota toda na rua.' },
   { at: 570, text: '09h30 · Semob diz ter sido avisada da “adesivação”.' },
+  { at: 620, text: 'Semob: a frota foi a mesma do 1º turno.' },
   { at: 665, text: '11h05 · Pedido à Justiça: ônibus ainda na garagem.' },
   { at: 740, text: '12h20 · Nova ordem: pode sair com adesivo!', unlock: true },
-  { at: 800, text: 'TRE-BA: frota toda na rua, multa de R$ 1 mi por hora.' },
-  { at: 860, text: 'TRE-BA manda a PF prender o secretário. Ele está em Paris.', arrest: true },
+  { at: 775, text: 'Bruno Reis: tirar adesivo atrasou a operação.' },
+  { at: 815, text: 'TRE-BA: frota toda na rua, multa de R$ 1 mi por hora.' },
+  { at: 875, text: 'TRE-BA manda a PF prender o secretário. Ele está em Paris.', arrest: true },
 ];
 
 export const CLOCK_START = 6 * 60;
@@ -55,10 +58,10 @@ export function clockText(minutes: number) {
 
 export const RANKS: [number, string][] = [
   [0, 'Estagiário em Paris'],
-  [5, 'Raspador de Domingo'],
-  [11, 'Espátula da Semob'],
-  [18, 'Terror da Cola'],
-  [26, 'Mais rápido que a Prefeitura'],
+  [8, 'Fiscal de Domingo'],
+  [15, 'Espátula da Semob'],
+  [22, 'Terror da Burocracia'],
+  [30, 'Mais rápido que a Prefeitura'],
 ];
 
 export function rankFor(score: number) {

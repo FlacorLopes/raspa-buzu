@@ -2,8 +2,8 @@
 // thumbs-up the bus out, and get a shareable video of the round.
 
 import {
-  AUTO_RELEASE_MS, BUS_CAPACITY, ENTER_MS, EV, EXIT_MS, GAME_MS, MIN_SCRAPE_GAP_MS, RETIDOS,
-  UNLOCK_MS, busSpec, randomSeed, type BusSpec, type RunEvent,
+  AUTO_RELEASE_MS, BUS_CAPACITY, ENTER_MS, EV, EXIT_MS, MIN_SCRAPE_GAP_MS, RETIDOS,
+  busSpec, randomSeed, type BusSpec, type RunEvent,
 } from '../sim.ts';
 import { ACCESS_TOAST, CLEAN_BUS_TOASTS, DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, baratinoLevel, clockMinutes, clockText, rankFor } from '../content.ts';
 import { HandTracker, OneEuro, isThumbUp, type Pt } from './hands.ts';
@@ -19,6 +19,8 @@ const ctx = cv.getContext('2d')!;
 const W = 720, H = 1280;
 const S = cv.width / W;
 const RENDER_CAP = 30;              // leaves GPU time for the detector (see spike results)
+// The recording (round + end card) must fit a 60 s story/status clip: 56 s + 2.5 s = 58.5 s.
+const ROUND_MS = 56_000;
 const END_CARD_MS = 2500;
 const SHARE_URL = location.origin;
 const DEBUG = new URLSearchParams(location.search).has('debug');
@@ -204,7 +206,7 @@ function tryRelease() {
   const t = Math.round(elapsed);
   events.push([t, EV.RELEASE]);
   if (bus.spec.kind === '13' && bus.hp > 0) {
-    if (t < UNLOCK_MS) { blocked++; sfx?.bad(); toast('Regra da Semob: com adesivo do 13 não sai. Raspa!'); return; }
+    if (!unlocked) { blocked++; sfx?.bad(); toast('Regra da Semob: com adesivo do 13 não sai. Raspa!'); return; }
     forced++; leave(t, 'forced'); return;
   }
   // A bus with no 13 sticker: it could have left all along. Feeds the baratinômetro
@@ -316,7 +318,7 @@ function update(dt: number, now: number) {
   if (mode === 'play') {
     elapsed += dt * 1000 * SPEED;
     voters += (35 + (elapsed / 1000) * 1.6) * dt;
-    const m = clockMinutes(elapsed, GAME_MS);
+    const m = clockMinutes(elapsed, ROUND_MS);
     while (eventIdx < EVENTS.length && m >= EVENTS[eventIdx].at) {
       const ev = EVENTS[eventIdx++];
       banner = { text: ev.text, until: now + 3200 }; sfx?.ping();
@@ -334,7 +336,7 @@ function update(dt: number, now: number) {
       bus = newBus(bus.spec.index + 1, bus.releaseAt + EXIT_MS);
       thumbGate.newBus();
     }
-    if (elapsed >= GAME_MS) { elapsed = GAME_MS; mode = 'endcard'; endcardStart = now; sfx?.horn(); }
+    if (elapsed >= ROUND_MS) { elapsed = ROUND_MS; mode = 'endcard'; endcardStart = now; sfx?.horn(); }
   }
   if (mode === 'endcard' && now - endcardStart > END_CARD_MS) finish();
 
@@ -453,7 +455,7 @@ function stamp(r: Rect, label: string, color: string) {
 function drawHud() {
   ctx.fillStyle = 'rgba(10,12,12,0.82)'; ctx.fillRect(0, 0, W, 118);
   const cols = [
-    ['RELÓGIO', clockText(clockMinutes(elapsed, GAME_MS))],
+    ['RELÓGIO', clockText(clockMinutes(elapsed, ROUND_MS))],
     ['NA RUA', String(score)],
     ['PASSAGEIROS\nESPERANDO', Math.round(voters).toLocaleString('pt-BR')],
     ['BARATINÔMETRO', String(passed)],
@@ -530,7 +532,7 @@ function drawCenter(text: string, size = 52) {
 }
 
 function drawTimeBar() {
-  const k = Math.min(1, elapsed / GAME_MS);
+  const k = Math.min(1, elapsed / ROUND_MS);
   ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(0, H - 14, W, 14);
   ctx.fillStyle = k > 0.85 ? '#d4251c' : '#f5c518'; ctx.fillRect(0, H - 14, W * (1 - k), 14);
 }
@@ -545,7 +547,7 @@ function drawEndCard() {
   ctx.fillStyle = '#f5c518'; ctx.font = '400 110px Bungee, sans-serif'; ctx.fillText('RASPA', W / 2, 290);
   ctx.fillStyle = '#f3f1ea'; ctx.fillText('BUZU', W / 2, 400);
   ctx.fillStyle = '#f5c518'; ctx.font = '400 260px Bungee, sans-serif'; ctx.fillText(String(score), W / 2, 700);
-  ctx.fillStyle = '#f3f1ea'; ctx.font = '800 40px Archivo, sans-serif'; ctx.fillText('ônibus na rua em 60 segundos', W / 2, 770);
+  ctx.fillStyle = '#f3f1ea'; ctx.font = '800 40px Archivo, sans-serif'; ctx.fillText('ônibus na rua em 1 minuto', W / 2, 770);
   ctx.font = '400 44px Bungee, sans-serif'; ctx.fillText(rankFor(score).toUpperCase(), W / 2, 860, W - 60);
   const m = paceMinutes(), rip = ripAvgSec();
   ctx.fillStyle = '#ffae1a'; ctx.font = '400 46px VT323, monospace';
@@ -582,7 +584,7 @@ function wrapUncached(text: string, max: number) {
 
 const fmt1 = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
 // Stickers removed per minute (the run mixes in clean buses, so this undersells the player).
-const paceMinutes = () => (scraped > 0 ? (RETIDOS * GAME_MS) / scraped / 60_000 : null);
+const paceMinutes = () => (scraped > 0 ? (RETIDOS * ROUND_MS) / scraped / 60_000 : null);
 const ripAvgSec = () => (ripMs.length ? ripMs.reduce((a, b) => a + b, 0) / ripMs.length / 1000 : null);
 const buses = (n: number) => `${n} ônibus`;
 
@@ -623,7 +625,7 @@ function shareText() {
   const ripText = rip !== null ? ` Tirar o adesivo levou ${fmt1(rip)} s.` : '';
   const pace = m !== null ? ` No meu ritmo, os ${RETIDOS} ônibus retidos em Salvador estariam na rua em ${fmt1(m)} minutos.` : '';
   const clean = passed > 0 ? ` ${buses(passed)} nem tinham adesivo: baratinômetro no ${baratinoLevel(passed)}.` : '';
-  return `🚌 Botei ${buses(score)} na rua em 60 segundos no Raspa Buzu.${clean}${ripText}${pace} O Procon contou 944 ônibus parados. Duvido você. ${SHARE_URL}/camera/`;
+  return `🚌 Botei ${buses(score)} na rua em 1 minuto no Raspa Buzu.${clean}${ripText}${pace} O Procon contou 944 ônibus parados. Duvido você. ${SHARE_URL}/camera/`;
 }
 
 $<HTMLButtonElement>('#eShare').addEventListener('click', async () => {

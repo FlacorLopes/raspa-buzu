@@ -7,9 +7,14 @@ export function pickMime() {
   return TYPES.find((t) => MediaRecorder.isTypeSupported(t)) ?? '';
 }
 
+/** Hard cap so a clip always fits a 60 s story/status, whatever the game timing does. */
+export const MAX_RECORD_MS = 59_500;
+
 export class CanvasRecorder {
   private rec: MediaRecorder | null = null;
   private chunks: Blob[] = [];
+  private stopped: Promise<void> | null = null;
+  private capTimer = 0;
   readonly mime = pickMime();
 
   get supported() { return Boolean(this.mime); }
@@ -19,21 +24,25 @@ export class CanvasRecorder {
     const stream = canvas.captureStream(24);
     audio?.getAudioTracks().forEach((t) => stream.addTrack(t));
     this.chunks = [];
-    this.rec = new MediaRecorder(stream, { mimeType: this.mime, videoBitsPerSecond: 2_000_000 });
-    this.rec.ondataavailable = (e) => { if (e.data.size) this.chunks.push(e.data); };
-    this.rec.start(500);
+    const rec = new MediaRecorder(stream, { mimeType: this.mime, videoBitsPerSecond: 2_000_000 });
+    rec.ondataavailable = (e) => { if (e.data.size) this.chunks.push(e.data); };
+    this.stopped = new Promise((resolve) => { rec.onstop = () => resolve(); });
+    rec.start(500);
+    this.rec = rec;
+    clearTimeout(this.capTimer);
+    this.capTimer = window.setTimeout(() => { if (rec.state !== 'inactive') rec.stop(); }, MAX_RECORD_MS);
   }
 
-  stop(name: string): Promise<File | null> {
+  /** Stops (if the cap has not already) and returns the clip. */
+  async stop(name: string): Promise<File | null> {
     const rec = this.rec;
-    if (!rec || rec.state === 'inactive') return Promise.resolve(null);
-    return new Promise((resolve) => {
-      rec.onstop = () => {
-        const type = this.mime.split(';')[0];
-        const ext = type === 'video/mp4' ? 'mp4' : 'webm';
-        resolve(new File(this.chunks, `${name}.${ext}`, { type }));
-      };
-      rec.stop();
-    });
+    if (!rec || !this.stopped) return null;
+    clearTimeout(this.capTimer);
+    if (rec.state !== 'inactive') rec.stop();
+    await this.stopped;
+    this.rec = null;
+    const type = this.mime.split(';')[0];
+    const ext = type === 'video/mp4' ? 'mp4' : 'webm';
+    return new File(this.chunks, `${name}.${ext}`, { type });
   }
 }

@@ -1,9 +1,9 @@
 // Main-thread side of hand tracking: feeds camera frames to the worker (only when it is idle,
 // so nothing queues) and hands results back in camera-normalised coordinates.
 
-import type { FromWorker, Pt, ToWorker } from './hand-worker.ts';
+import type { FromWorker, Gesture, ModelKind, Pt, ToWorker } from './hand-worker.ts';
 
-export type { Pt };
+export type { Gesture, ModelKind, Pt };
 
 export class HandTracker {
   ready = false;
@@ -11,8 +11,10 @@ export class HandTracker {
   error = '';
   loadMs = 0;
   progress = { bytes: 0, total: 0 };
-  /** Called with the 21 landmarks (0..1, camera space, not mirrored) or null when no hand. */
-  onResult: (landmarks: Pt[] | null, at: number) => void = () => {};
+  /** Called with the 21 landmarks (0..1, camera space, not mirrored) or null when no hand,
+   *  plus the recognizer's top gesture when the gesture model is in use. */
+  onResult: (landmarks: Pt[] | null, at: number, gesture: Gesture | null) => void = () => {};
+  lastGesture: Gesture | null = null;
 
   /** How frames reach the worker: VideoFrame avoids a copy; ImageBitmap is the fallback. */
   source: 'VideoFrame' | 'ImageBitmap' = typeof VideoFrame === 'function' ? 'VideoFrame' : 'ImageBitmap';
@@ -23,11 +25,14 @@ export class HandTracker {
   private inferMs: number[] = [];
   private latencyMs: number[] = [];
 
-  constructor(wasmBase: string, modelUrl: string) {
+  readonly kind: ModelKind;
+
+  constructor(wasmBase: string, modelUrl: string, kind: ModelKind = 'landmarker') {
+    this.kind = kind;
     this.worker = new Worker(new URL('./hand-worker.ts', import.meta.url));
     this.worker.addEventListener('message', (e: MessageEvent<FromWorker>) => this.handle(e.data));
     this.worker.addEventListener('error', (e) => { this.error = e.message || 'o detector de mão não iniciou'; });
-    this.send({ type: 'init', wasmBase: new URL(wasmBase, location.href).href, modelUrl: new URL(modelUrl, location.href).href });
+    this.send({ type: 'init', wasmBase: new URL(wasmBase, location.href).href, modelUrl: new URL(modelUrl, location.href).href, kind });
   }
 
   private send(m: ToWorker, transfer: Transferable[] = []) { this.worker.postMessage(m, transfer); }
@@ -43,7 +48,8 @@ export class HandTracker {
       push(this.stamps, now);
       push(this.inferMs, m.ms);
       push(this.latencyMs, now - m.t);   // camera frame grabbed -> landmarks back
-      this.onResult(m.landmarks, now);
+      this.lastGesture = m.gesture;
+      this.onResult(m.landmarks, now, m.gesture);
     }
   }
 

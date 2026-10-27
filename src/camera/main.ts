@@ -28,7 +28,12 @@ const QS = new URLSearchParams(location.search);
 const MOUSE = QS.has('mouse');
 const SPEED = MOUSE ? Math.max(1, Number(QS.get('speed')) || 1) : 1;
 
-const tracker = new HandTracker('/mediapipe/wasm', '/mediapipe/hand_landmarker.task');
+// ?gr=0 falls back to the plain landmarker (thumbs-up from a pose heuristic) for comparison.
+const GESTURE_MODEL = new URLSearchParams(location.search).get('gr') !== '0';
+const tracker = GESTURE_MODEL
+  ? new HandTracker('/mediapipe/wasm', '/mediapipe/gesture_recognizer.task', 'gesture')
+  : new HandTracker('/mediapipe/wasm', '/mediapipe/hand_landmarker.task', 'landmarker');
+const THUMB_MIN_SCORE = 0.55;
 const video = document.createElement('video');
 video.playsInline = true; video.muted = true;
 let sfx: Sfx | null = null;
@@ -110,7 +115,7 @@ let thumbFrames = 0;
 let thumbCooldown = 0;
 const THUMB_FRAMES = 2;          // consecutive detections showing 👍 (~0.25 s on the A17)
 
-tracker.onResult = (lm, now) => {
+tracker.onResult = (lm, now, gesture) => {
   if (!lm) { tip = null; fx.reset(); fy.reset(); handSince = 0; thumbFrames = 0; return; }
   if (!handSince) handSince = now;
   const p = { ...toCanvas(lm[8]), t: now };
@@ -121,7 +126,10 @@ tracker.onResult = (lm, now) => {
   }
   tip = p;
 
-  thumbFrames = isThumbUp(lm) ? thumbFrames + 1 : 0;
+  const thumbs = tracker.kind === 'gesture'
+    ? gesture?.name === 'Thumb_Up' && gesture.score >= THUMB_MIN_SCORE
+    : isThumbUp(lm);
+  thumbFrames = thumbs ? thumbFrames + 1 : 0;
   if (thumbFrames >= THUMB_FRAMES && interactive() && now > thumbCooldown) {
     thumbCooldown = now + 1000; thumbFrames = 0;
     tryRelease();
@@ -330,10 +338,11 @@ function drawDebug() {
   const lines = [
     `det ${tracker.fps().toFixed(1)}/s · inferência ${t.inferMs.toFixed(0)} ms · atraso ${t.latencyMs.toFixed(0)} ms`,
     `desenho ${avg.toFixed(1)} ms · ${tracker.delegate} · ${tracker.source} · gravação ${RECORD ? 'on' : 'off'} · tela ${cv.width}x${cv.height}`,
+    `modelo ${tracker.kind} · gesto ${tracker.lastGesture ? `${tracker.lastGesture.name} ${(tracker.lastGesture.score * 100).toFixed(0)}%` : '-'} · joinhas seguidos ${thumbFrames}`,
   ];
-  ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, H - 92, W, 72);
+  ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, H - 120, W, 100);
   ctx.fillStyle = '#7CFC9A'; ctx.font = '400 26px VT323, monospace'; ctx.textAlign = 'left';
-  lines.forEach((l, i) => ctx.fillText(l, 12, H - 64 + i * 28));
+  lines.forEach((l, i) => ctx.fillText(l, 12, H - 92 + i * 28));
 }
 
 function loadPct() {

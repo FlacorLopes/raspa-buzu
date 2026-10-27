@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Raspa Buzu · teste de deslize</title>
+<style>
+  :root { --ink: #f3f1ea; --hazard: #f5c518; color-scheme: dark; }
+  html, body { height: 100%; margin: 0; background: #111415; color: var(--ink); font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #wrap { position: fixed; inset: 0; display: grid; place-items: center; }
+  canvas { height: 100%; max-width: 100%; aspect-ratio: 9 / 16; background: #000; }
+  #hud { position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0; padding: 8px 10px; font: 12px/1.35 ui-monospace, monospace; background: rgba(0,0,0,.55); white-space: pre-wrap; pointer-events: none; }
+  #bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); display: flex; flex-wrap: wrap; gap: 6px; background: rgba(0,0,0,.6); }
+  button, select { font: 600 14px system-ui, sans-serif; color: var(--ink); background: #2a2f30; border: 1px solid #3a4243; border-radius: 8px; padding: 9px 12px; }
+  button.primary { background: var(--hazard); color: #111; border-color: var(--hazard); }
+</style>
+</head>
+<body>
+  <div id="wrap"><canvas id="cv" width="720" height="1280"></canvas></div>
+  <div id="hud">Carregando…</div>
+  <div id="bar">
+    <button id="start" class="primary" type="button">Ligar câmera</button>
+    <select id="dist" aria-label="Deslize mínimo">
+      <option value="0.2">deslize 20%</option>
+      <option value="0.3" selected>deslize 30%</option>
+      <option value="0.4">deslize 40%</option>
+    </select>
+    <select id="cursorMode" aria-label="Modo do cursor">
+      <option value="smooth">cursor suave</option>
+      <option value="predict">cursor previsão</option>
+      <option value="raw">cursor cru</option>
+    </select>
+    <button id="reset" type="button">Zerar</button>
+    <button id="report" type="button">Copiar relatório</button>
+  </div>
+  <script type="module" src="../src/spike/swipe.ts"></script>
+</body>
+</html>

@@ -1,15 +1,14 @@
-// Raspa Buzu, camera mode: scrape the 13 sticker off the windshield with your finger,
-// wave the bus out, and get a shareable video of the round.
+// Raspa Buzu, camera mode: swipe left to rip the 13 sticker off the windshield, swipe right
+// to let the bus go, and get a shareable video of the round.
 
 import {
-  AUTO_RELEASE_MS, BUS_CAPACITY, ENTER_MS, EV, EXIT_MS, GAME_MS, MIN_SCRAPE_GAP_MS, RETIDOS,
-  UNLOCK_MS, busSpec, randomSeed, type BusSpec, type RunEvent,
+  BUS_CAPACITY, ENTER_MS, EXIT_MS, GAME_MS, RETIDOS, UNLOCK_MS, busSpec, randomSeed, type BusSpec,
 } from '../sim.ts';
-import { ACCESS_TOAST, DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, clockMinutes, clockText, rankFor } from '../content.ts';
-import { HandTracker, OneEuro, isOpenPalm, type Pt } from './hands.ts';
+import { DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, clockMinutes, clockText, rankFor } from '../content.ts';
+import { HandTracker, type Pt } from './hands.ts';
 import { Sfx } from './audio.ts';
 import { CanvasRecorder } from './recorder.ts';
-import { accessCenter, drawBusFront, stickerCenter, stickerRadius, type Rect } from './bus-art.ts';
+import { drawBusFront, stickerCenter, stickerRadius, type Rect } from './bus-art.ts';
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 const cv = $<HTMLCanvasElement>('#cv');
@@ -32,16 +31,14 @@ const recorder = new CanvasRecorder();
 type Mode = 'intro' | 'waiting' | 'countdown' | 'play' | 'endcard' | 'end';
 let mode: Mode = 'intro';
 
-// ---------- run state (mirrors the rules in sim.ts) ----------
+// ---------- run state (bus sequence and timings from sim.ts) ----------
 interface BusState { spec: BusSpec; hp: number; enterAt: number; readyAt: number; releaseAt: number | null; how: string }
 let seed = randomSeed();
 let elapsed = 0;
 let bus: BusState;
-let events: RunEvent[] = [];
 let score = 0, scraped = 0, passed = 0, forced = 0, blocked = 0, penalties = 0;
 let voters = 300;
 let eventIdx = 0, unlocked = false, arrested = false;
-let lastScrapeT = -Infinity, penaltyCooldown = 0;
 
 function newBus(i: number, enterAt: number): BusState {
   const spec = busSpec(seed, i);
@@ -50,10 +47,9 @@ function newBus(i: number, enterAt: number): BusState {
 
 function resetRun() {
   seed = randomSeed();
-  elapsed = 0; events = [];
+  elapsed = 0;
   score = scraped = passed = forced = blocked = penalties = 0;
   voters = 300; eventIdx = 0; unlocked = false; arrested = false;
-  lastScrapeT = -Infinity; penaltyCooldown = 0;
   paris = { text: '', until: 0, next: 7000, i: 0, j: 0 };
   banner = { text: '', until: 0 };
   bus = newBus(0, 0);
@@ -94,92 +90,111 @@ async function startCamera() {
   computeMap();
 }
 
-// ---------- hand input ----------
-const fx = new OneEuro(), fy = new OneEuro();
-let tip: (Pt & { t: number }) | null = null;
-let cursor: Pt | null = null;
+// ---------- hand input: broad horizontal swipes of the palm ----------
+// Calibrated on a Galaxy A17 (6-9 detections/s): swipes took 280-590 ms over 3-5 detections
+// and covered 23-52% of the width. The fingertip scrape and the wave were unreliable there.
+const SWIPE_MIN = 0.3;           // share of the canvas width
+const SWIPE_WINDOW_MS = 800;
+const SWIPE_COOLDOWN_MS = 500;
+const RETURN_IGNORE_MS = 900;    // the hand coming back is not a new swipe
+type Sample = Pt & { t: number };
+const hist: Sample[] = [];
+let swipeCooldown = 0;
+let lastSwipe: { dir: 'L' | 'R'; t: number } | null = null;
 let handSince = 0;
-let pathAcc = 0;
-const wrist: { x: number; t: number; open: boolean }[] = [];
-let waveCooldown = 0;
+let lastPalm: Sample | null = null;
+let vel = { x: 0, y: 0 };
+let flash: { dir: 'L' | 'R'; until: number } | null = null;
+
+/** Palm centre: wrist plus the four finger bases. Steadier than a fingertip. */
+function palm(lm: Pt[]) {
+  const ids = [0, 5, 9, 13, 17];
+  let x = 0, y = 0;
+  for (const i of ids) { x += lm[i].x; y += lm[i].y; }
+  return toCanvas({ x: x / ids.length, y: y / ids.length });
+}
 
 tracker.onResult = (lm, now) => {
-  if (!lm) { tip = null; fx.reset(); fy.reset(); handSince = 0; wrist.length = 0; return; }
-  if (!handSince) handSince = now;
-  const raw = toCanvas(lm[8]);
-  const p = { x: fx.filter(raw.x, now), y: fy.filter(raw.y, now), t: now };
-  if (tip && interactive()) scrapeAlong(tip, p);
-  tip = p;
-  if (!cursor) cursor = { x: p.x, y: p.y };
-
-  const wr = toCanvas(lm[0]);
-  wrist.push({ x: wr.x, t: now, open: isOpenPalm(lm) });
-  while (wrist.length && now - wrist[0].t > 650) wrist.shift();
-  if (interactive() && now > waveCooldown && wrist.length >= 3) {
-    const openShare = wrist.filter((w) => w.open).length / wrist.length;
-    const dx = wrist[wrist.length - 1].x - wrist[0].x;
-    if (openShare >= 0.5 && Math.abs(dx) > W * 0.22) { waveCooldown = now + 900; wrist.length = 0; tryRelease(); }
+  if (!lm) {
+    checkSwipe(now);                 // a swipe that ends off-screen still counts
+    hist.length = 0; lastPalm = null; handSince = 0;
+    return;
   }
+  if (!handSince) handSince = now;
+  feedPalm(palm(lm), now);
 };
 
-function segDist(px: number, py: number, a: Pt, b: Pt) {
-  const vx = b.x - a.x, vy = b.y - a.y, len2 = vx * vx + vy * vy || 1;
-  const k = Math.max(0, Math.min(1, ((px - a.x) * vx + (py - a.y) * vy) / len2));
-  return Math.hypot(px - (a.x + k * vx), py - (a.y + k * vy));
+function feedPalm(p: Pt, now: number) {
+  const s = { x: p.x, y: p.y, t: now };
+  if (lastPalm) {
+    const dt = Math.max(1, now - lastPalm.t);
+    vel = { x: (s.x - lastPalm.x) / dt, y: (s.y - lastPalm.y) / dt };
+  }
+  lastPalm = s;
+  hist.push(s);
+  while (hist.length && now - hist[0].t > SWIPE_WINDOW_MS) hist.shift();
+  checkSwipe(now);
 }
 
-function scrapeAlong(a: Pt & { t: number }, b: Pt & { t: number }) {
-  const r = busRect(), sr = stickerRadius(r);
-  const dist = Math.hypot(b.x - a.x, b.y - a.y);
-  const speed = dist / Math.max(1, b.t - a.t);       // px/ms on the 720px canvas
-  if (speed < 0.25) return;
-  const t = Math.round(elapsed);
-
-  // Penalty stickers: accessibility (always there) and non-candidate decoys.
-  if (t > penaltyCooldown) {
-    const ac = accessCenter(r);
-    if (segDist(ac.x, ac.y, a, b) < sr * 0.9) { penalty(EV.ACCESS, ACCESS_TOAST, t); return; }
-    if (bus.spec.kind === 'decoy') {
-      const dc = stickerCenter(r, bus.spec);
-      if (segDist(dc.x, dc.y, a, b) < sr * 1.2) { penalty(EV.DECOY, DECOYS[bus.spec.decoy].toast, t); return; }
-    }
+function checkSwipe(now: number) {
+  if (now < swipeCooldown || hist.length < 2) return;
+  const last = hist[hist.length - 1];
+  for (let i = 0; i < hist.length - 1; i++) {
+    const a = hist[i];
+    const dx = last.x - a.x, dy = last.y - a.y;
+    if (last.t - a.t > SWIPE_WINDOW_MS) continue;
+    if (Math.abs(dx) < W * SWIPE_MIN || Math.abs(dy) > Math.abs(dx) * 0.7) continue;
+    const dir = dx < 0 ? 'L' : 'R';
+    hist.length = 0;
+    if (lastSwipe && lastSwipe.dir !== dir && now - lastSwipe.t < RETURN_IGNORE_MS) return;
+    lastSwipe = { dir, t: now };
+    swipeCooldown = now + SWIPE_COOLDOWN_MS;
+    onSwipe(dir);
+    return;
   }
+}
 
-  if (bus.spec.kind !== '13' || bus.hp <= 0) return;
-  const c = stickerCenter(r, bus.spec);
-  if (segDist(c.x, c.y, a, b) > sr * 1.35) return;
-  pathAcc += dist;
-  if (pathAcc < sr * 1.1 || t - lastScrapeT < MIN_SCRAPE_GAP_MS) return;
-  pathAcc = 0; lastScrapeT = t;
-  bus.hp--;
-  events.push([t, EV.SCRAPE]);
-  sfx?.scrape();
-  chips(c.x, c.y, 5, '#d4251c');
-  if (bus.hp === 0) {
+/** Palm cursor, projected along its last velocity until the next detection (hides the lag). */
+function cursorPos(now: number) {
+  if (!lastPalm) return null;
+  const ahead = Math.min(now - lastPalm.t, 120);
+  return { x: lastPalm.x + vel.x * ahead, y: lastPalm.y + vel.y * ahead };
+}
+
+function onSwipe(dir: 'L' | 'R') {
+  flash = { dir, until: performance.now() + 450 };
+  if (!interactive()) return;
+  const t = Math.round(elapsed);
+  if (dir === 'L') ripSticker(t); else letGo(t);
+}
+
+function ripSticker(t: number) {
+  if (bus.spec.kind === '13' && bus.hp > 0) {
+    const r = busRect(), c = stickerCenter(r, bus.spec), sr = stickerRadius(r);
+    bus.hp = 0;
     score++; scraped++;
-    sfx?.pop();
+    sfx?.scrape(); sfx?.pop();
+    flying.push({ x: c.x, y: c.y, vx: -1500, vy: -260, rot: bus.spec.rot, vr: -9, r: sr, life: 0.8 });
     chips(c.x, c.y, 16, '#d4251c'); chips(c.x, c.y, 6, '#ffffff');
     floaters.push({ x: c.x, y: c.y - sr, text: '+1', life: 0.9, color: '#f5c518' });
-    leave(t + AUTO_RELEASE_MS, 'scraped');
+    leave(t + 250, 'scraped');
+    return;
   }
+  penalty(bus.spec.kind === 'decoy' ? DECOYS[bus.spec.decoy].toast : 'Esse buzu nem tem adesivo do 13.');
 }
 
-function penalty(code: typeof EV.ACCESS | typeof EV.DECOY, text: string, t: number) {
-  events.push([t, code]);
-  score = Math.max(0, score - 1); penalties++;
-  penaltyCooldown = t + 1200;
-  sfx?.bad();
-  toast(`${text} (−1)`);
-}
-
-function tryRelease() {
-  const t = Math.round(elapsed);
-  events.push([t, EV.RELEASE]);
+function letGo(t: number) {
   if (bus.spec.kind === '13' && bus.hp > 0) {
-    if (t < UNLOCK_MS) { blocked++; sfx?.bad(); toast('Com adesivo do 13 não sai. Raspa!'); return; }
+    if (t < UNLOCK_MS) { blocked++; sfx?.bad(); toast('Com adesivo do 13 não sai. Arranca pra esquerda!'); return; }
     forced++; leave(t, 'forced'); return;
   }
   passed++; leave(t, 'pass');
+}
+
+function penalty(text: string) {
+  score = Math.max(0, score - 1); penalties++;
+  sfx?.bad();
+  toast(`${text} (−1)`);
 }
 
 function leave(at: number, how: string) {
@@ -191,6 +206,8 @@ function leave(at: number, how: string) {
 // ---------- effects ----------
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; color: string; s: number }
 let particles: Particle[] = [];
+/** Ripped stickers flying off to the left. */
+let flying: { x: number; y: number; vx: number; vy: number; rot: number; vr: number; r: number; life: number }[] = [];
 let floaters: { x: number; y: number; text: string; life: number; color: string }[] = [];
 let toastMsg = { text: '', until: 0 };
 let banner = { text: '', until: 0 };
@@ -241,8 +258,8 @@ function update(dt: number, now: number) {
   particles = particles.filter((p) => p.life > 0);
   for (const f of floaters) { f.life -= dt; f.y -= 60 * dt; }
   floaters = floaters.filter((f) => f.life > 0);
-  if (tip && cursor) { const k = 1 - Math.exp(-dt * 23); cursor.x += (tip.x - cursor.x) * k; cursor.y += (tip.y - cursor.y) * k; }
-  else if (!tip) cursor = null;
+  for (const f of flying) { f.life -= dt; f.x += f.vx * dt; f.y += f.vy * dt; f.vy += 900 * dt; f.rot += f.vr * dt; }
+  flying = flying.filter((f) => f.life > 0);
 }
 let lastCount = 4;
 
@@ -278,7 +295,10 @@ function draw(now: number) {
     ctx.fillStyle = f.color; ctx.font = '400 56px Bungee, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x, f.y);
   }
   ctx.globalAlpha = 1;
-  if (cursor && mode !== 'endcard') drawScraper(cursor);
+  for (const f of flying) drawFlyingSticker(f);
+  const c = cursorPos(now);
+  if (c && mode !== 'endcard') drawPalmCursor(c);
+  if (mode === 'play') drawHints(now);
 
   drawHud();
   if (now < banner.until) drawBanner(banner.text);
@@ -295,12 +315,35 @@ function loadPct() {
   return total ? `${Math.round((bytes / total) * 100)}%` : '';
 }
 
-function drawScraper(p: Pt) {
-  ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(-0.5);
-  ctx.fillStyle = '#c9ced1'; ctx.strokeStyle = '#3b4244'; ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.moveTo(-34, -6); ctx.lineTo(34, -6); ctx.lineTo(26, 18); ctx.lineTo(-26, 18); ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#f5c518'; ctx.fillRect(-10, 18, 20, 46); ctx.strokeRect(-10, 18, 20, 46);
+function drawPalmCursor(p: Pt) {
+  ctx.strokeStyle = 'rgba(245,197,24,0.95)'; ctx.lineWidth = 8;
+  ctx.beginPath(); ctx.arc(p.x, p.y, 38, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = 'rgba(245,197,24,0.35)';
+  ctx.beginPath(); ctx.arc(p.x, p.y, 30, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawFlyingSticker(f: { x: number; y: number; rot: number; r: number }) {
+  ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.rot);
+  ctx.fillStyle = '#d4251c'; ctx.beginPath(); ctx.arc(0, 0, f.r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = f.r * 0.09; ctx.beginPath(); ctx.arc(0, 0, f.r * 0.86, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.font = `400 ${f.r * 0.7}px Bungee, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('13', 0, 2); ctx.textBaseline = 'alphabetic';
   ctx.restore();
+}
+
+/** Permanent reminders of the two gestures, lit up when one is detected. */
+function drawHints(now: number) {
+  const y = BUS.y - 54, h = 46;
+  const lit = flash && now < flash.until ? flash.dir : null;
+  const pill = (x: number, w: number, label: string, color: string, on: boolean) => {
+    ctx.fillStyle = on ? color : 'rgba(10,12,12,0.7)';
+    ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, 23); else ctx.rect(x, y, w, h); ctx.fill();
+    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = '400 24px Bungee, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + w / 2, y + h / 2 + 1); ctx.textBaseline = 'alphabetic';
+  };
+  pill(24, 300, '← ARRANCA O 13', '#d4251c', lit === 'L');
+  pill(W - 324, 300, 'DEIXA IR →', '#1f9d55', lit === 'R');
 }
 
 function stamp(r: Rect, label: string, color: string) {
@@ -383,7 +426,7 @@ function drawEndCard() {
   ctx.fillStyle = '#f5c518'; ctx.font = '400 110px Bungee, sans-serif'; ctx.fillText('RASPA', W / 2, 290);
   ctx.fillStyle = '#f3f1ea'; ctx.fillText('BUZU', W / 2, 400);
   ctx.fillStyle = '#f5c518'; ctx.font = '400 260px Bungee, sans-serif'; ctx.fillText(String(score), W / 2, 700);
-  ctx.fillStyle = '#f3f1ea'; ctx.font = '800 40px Archivo, sans-serif'; ctx.fillText('adesivos raspados com a mão', W / 2, 770);
+  ctx.fillStyle = '#f3f1ea'; ctx.font = '800 40px Archivo, sans-serif'; ctx.fillText('adesivos arrancados com a mão', W / 2, 770);
   ctx.font = '400 44px Bungee, sans-serif'; ctx.fillText(rankFor(score).toUpperCase(), W / 2, 860, W - 60);
   const m = paceMinutes();
   ctx.fillStyle = '#ffae1a'; ctx.font = '400 46px VT323, monospace';
@@ -419,7 +462,7 @@ async function finish() {
   const m = paceMinutes();
   $<HTMLElement>('#eLine').textContent = m !== null
     ? `No seu ritmo, os ${RETIDOS} ônibus retidos estariam na rua em ${fmt1(m)} minutos. A prefeitura levou umas 3 horas.`
-    : 'Nenhum adesivo raspado. Você igualou a manhã de domingo.';
+    : 'Nenhum adesivo arrancado. Você igualou a manhã de domingo.';
   const vid = $<HTMLVideoElement>('#eVideo');
   const share = $<HTMLButtonElement>('#eShare');
   const dl = $<HTMLAnchorElement>('#eDownload');
@@ -437,7 +480,7 @@ async function finish() {
 function shareText() {
   const m = paceMinutes();
   const pace = m !== null ? ` No meu ritmo, os ${RETIDOS} ônibus retidos em Salvador estariam na rua em ${fmt1(m)} minutos.` : '';
-  return `🚌✋ Raspei ${score} adesivos com a mão em 60 segundos no Raspa Buzu.${pace} Duvido você. ${SHARE_URL}/camera/`;
+  return `🚌✋ Arranquei ${score} adesivos do 13 com a mão em 60 segundos no Raspa Buzu.${pace} Duvido você. ${SHARE_URL}/camera/`;
 }
 
 $<HTMLButtonElement>('#eShare').addEventListener('click', async () => {
@@ -451,23 +494,23 @@ $<HTMLButtonElement>('#eAgain').addEventListener('click', () => {
 });
 
 // ---------- mouse stand-in (?mouse=1): desktop testing without a camera ----------
-// The pointer plays the fingertip, a click is a scrape stroke, the W key or a right click waves.
-
+// Dragging plays the palm (a fast horizontal drag is a swipe); the arrow keys swipe directly.
 if (MOUSE) {
   const pos = (e: PointerEvent) => {
     const r = cv.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H, t: performance.now() };
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
   };
   cv.addEventListener('pointermove', (e) => {
-    const p = pos(e);
-    if (!handSince) handSince = p.t;
-    if (tip && interactive() && e.buttons) scrapeAlong(tip, p);
-    tip = p;
-    if (!cursor) cursor = { x: p.x, y: p.y };
+    const now = performance.now();
+    if (!handSince) handSince = now;
+    if (e.buttons) feedPalm(pos(e), now);
+    else { lastPalm = { ...pos(e), t: now }; vel = { x: 0, y: 0 }; }
   });
-  const wave = () => { if (interactive()) tryRelease(); };
-  window.addEventListener('keydown', (e) => { if (e.key === 'w' || e.key === ' ') wave(); });
-  cv.addEventListener('contextmenu', (e) => { e.preventDefault(); wave(); });
+  cv.addEventListener('pointerup', () => { hist.length = 0; });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') onSwipe('L');
+    if (e.key === 'ArrowRight') onSwipe('R');
+  });
 }
 
 // ---------- start ----------

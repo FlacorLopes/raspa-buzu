@@ -5,10 +5,14 @@ import {
   AUTO_RELEASE_MS, BUS_CAPACITY, ENTER_MS, EV, EXIT_MS, MIN_SCRAPE_GAP_MS, RETIDOS,
   busSpec, randomSeed, type BusSpec, type RunEvent,
 } from '../sim.ts';
-import { ACCESS_TOAST, CLEAN_BUS_TOASTS, DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, baratinoLevel, clockMinutes, clockText, rankFor } from '../content.ts';
+import {
+  ACCESS_TOAST, CLEAN_BUS_TOASTS, DECOYS, EVENTS, MUSIC_CREDIT_SHARE, MUSIC_CREDIT_SHORT, PARIS_AFTER, PARIS_BEFORE,
+  baratinoLevel, clockMinutes, clockText, rankFor,
+} from '../content.ts';
 import { HandTracker, OneEuro, isThumbUp, type Pt } from './hands.ts';
 import { ThumbGate } from './thumb-gate.ts';
 import { GESTURE_MODEL_URLS, LANDMARKER_MODEL_URLS, WASM_BASES } from './assets.ts';
+import musicUrl from '../assets/bloquinho.mp3';
 import { Sfx } from './audio.ts';
 import { CanvasRecorder } from './recorder.ts';
 import { accessCenter, drawBusFront, stickerCenter, stickerRadius, type Rect } from './bus-art.ts';
@@ -356,6 +360,7 @@ function startRound() {
   // The run was reset when waiting began, so the bus shown in the countdown is bus 0.
   mode = 'play';
   if (RECORD) recorder.start(cv, sfx?.stream);
+  sfx?.playMusic();                 // background track starts with the recording
   sfx?.horn();
 }
 
@@ -561,7 +566,8 @@ function drawEndCard(g: CanvasRenderingContext2D = ctx) {
   g.fillText(level ? `NÍVEL DE BARATINO: ${level.toUpperCase()}` : rankFor(score).toUpperCase(), W / 2, 845, W - 50);
   g.fillStyle = '#ffae1a'; g.font = '400 34px VT323, monospace';
   wrap(summaryText('meu'), W - 80, g).forEach((l, i) => g.fillText(l, W / 2, 905 + i * 37));
-  g.fillStyle = '#9ba5a4'; g.font = '600 28px Archivo, sans-serif'; g.fillText(`Sátira · ${SHARE_URL.replace(/^https?:\/\//, '')}`, W / 2, 1245);
+  g.fillStyle = '#9ba5a4'; g.font = '600 24px Archivo, sans-serif'; g.fillText(MUSIC_CREDIT_SHORT, W / 2, 1208);
+  g.font = '600 28px Archivo, sans-serif'; g.fillText(`Sátira · ${SHARE_URL.replace(/^https?:\/\//, '')}`, W / 2, 1245);
 }
 
 const wrapCache = new Map<string, string[]>();
@@ -622,6 +628,7 @@ function renderCardImage(): Promise<File | null> {
 
 async function finish() {
   mode = 'end';
+  sfx?.stopMusic();
   const [file, card] = await Promise.all([recorder.stop(`raspa-buzu-${score}-onibus`), renderCardImage()]);
   lastFile = file;
   cardFile = card;
@@ -666,7 +673,7 @@ function shareText() {
   const ripText = rip !== null ? ` Tirar o adesivo levou ${fmt1(rip)} s.` : '';
   const pace = m !== null ? ` No meu ritmo, os ${RETIDOS} ônibus retidos em Salvador estariam na rua em ${fmt1(m)} minutos.` : '';
   const clean = passed > 0 ? ` ${buses(passed)} nem tinham adesivo: baratinômetro no ${baratinoLevel(passed)}.` : '';
-  return `🚌 Botei ${buses(score)} na rua em 1 minuto no Raspa Buzu.${clean}${ripText}${pace} O Procon contou 944 ônibus parados. Duvido você. ${SHARE_URL}`;
+  return `🚌 Botei ${buses(score)} na rua em 1 minuto no Raspa Buzu.${clean}${ripText}${pace} O Procon contou 944 ônibus parados. Duvido você. ${SHARE_URL}\n${MUSIC_CREDIT_SHARE}`;
 }
 
 $<HTMLButtonElement>('#eShare').addEventListener('click', async () => {
@@ -712,6 +719,7 @@ $<HTMLButtonElement>('#startBtn').addEventListener('click', async () => {
   const btn = $<HTMLButtonElement>('#startBtn');
   btn.disabled = true;
   sfx = new Sfx(); sfx.resume();
+  void sfx.loadMusic(musicUrl);     // ~0.9 MB, fetched while the player sets up the camera
   try {
     if (!MOUSE) await startCamera();
   } catch (e) {

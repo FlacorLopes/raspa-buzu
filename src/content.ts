@@ -66,6 +66,10 @@ export function baratinoLevel(cleanBuses: number) {
   return name;
 }
 
+/** Background beat and its required credit (free for non-monetised use, credit mandatory). */
+export const MUSIC_CREDIT_SHORT = 'Beat: Bloquinho Hitmado · EMBeat';
+export const MUSIC_CREDIT_SHARE = '🎹 Beat: Bloquinho Hitmado – EMBeat (@esdrassmiranda_)';
+
 export interface ClockEvent { at: number; text: string; unlock?: boolean; arrest?: boolean }
 
 /** `at` is minutes since midnight on the in-game clock (06h00 to 17h00). */

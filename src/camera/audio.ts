@@ -21,6 +21,52 @@ export class Sfx {
 
   resume() { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); }
 
+  // ---------- background music (mixed into the recording like the effects) ----------
+  private music: AudioBuffer | null = null;
+  private musicSrc: AudioBufferSourceNode | null = null;
+  private musicGain: GainNode | null = null;
+  /** ctx time at which the music would have started; lets a late download join in sync. */
+  private musicStartedAt: number | null = null;
+
+  async loadMusic(url: string) {
+    try {
+      const res = await fetch(url);
+      this.music = await this.ctx.decodeAudioData(await res.arrayBuffer());
+      // The round already started while it was downloading: join at the right point.
+      if (this.musicStartedAt !== null && !this.musicSrc) this.startMusicAt(this.ctx.currentTime - this.musicStartedAt);
+    } catch {
+      this.music = null;   // the game plays fine without it
+    }
+  }
+
+  playMusic() {
+    this.stopMusic(0);
+    this.musicStartedAt = this.ctx.currentTime;
+    if (this.music) this.startMusicAt(0);
+  }
+
+  private startMusicAt(offset: number) {
+    if (!this.music || offset >= this.music.duration) return;
+    const src = this.ctx.createBufferSource();
+    const gain = this.ctx.createGain();
+    src.buffer = this.music;
+    gain.gain.value = 0.55;           // under the effects
+    src.connect(gain).connect(this.out);
+    src.start(0, offset);
+    this.musicSrc = src; this.musicGain = gain;
+  }
+
+  stopMusic(fadeMs = 600) {
+    this.musicStartedAt = null;
+    const src = this.musicSrc, gain = this.musicGain;
+    this.musicSrc = null; this.musicGain = null;
+    if (!src || !gain) return;
+    const t = this.ctx.currentTime;
+    gain.gain.setValueAtTime(gain.gain.value, t);
+    gain.gain.linearRampToValueAtTime(0.0001, t + fadeMs / 1000);
+    src.stop(t + fadeMs / 1000 + 0.05);
+  }
+
   private tone(freq: number, dur: number, type: OscillatorType = 'sine', gain = 0.06, slideTo?: number, when = 0) {
     const t = this.ctx.currentTime + when;
     const o = this.ctx.createOscillator(), g = this.ctx.createGain();

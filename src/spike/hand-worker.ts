@@ -6,12 +6,12 @@ import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 
 export type ToWorker =
   | { type: 'init'; wasmBase: string; modelUrl: string; delegate: 'auto' | 'gpu' | 'cpu' }
-  | { type: 'frame'; bitmap: ImageBitmap; t: number };
+  | { type: 'frame'; bitmap: ImageBitmap; t: number; delegate: 'GPU' | 'CPU' };
 
 export type FromWorker =
   | { type: 'stage'; name: string }
   | { type: 'progress'; bytes: number; total: number; done: boolean }
-  | { type: 'ready'; delegate: 'GPU' | 'CPU'; ms: number; gpuError: string; log: string[] }
+  | { type: 'ready'; delegates: ('GPU' | 'CPU')[]; ms: number; gpuError: string; log: string[] }
   | { type: 'error'; message: string }
   | { type: 'result'; t: number; ms: number; landmarks: { x: number; y: number }[] | null };
 
@@ -22,7 +22,8 @@ const scope = self as unknown as {
 const post = (m: FromWorker) => scope.postMessage(m);
 
 const GPU_TIMEOUT_MS = 12_000;
-let landmarker: HandLandmarker | null = null;
+// Both delegates are kept loaded so the benchmark can switch between them instantly.
+const landmarkers: Partial<Record<'GPU' | 'CPU', HandLandmarker>> = {};
 
 function describe(e: unknown): string {
   if (e instanceof Error) return e.message || e.name;
@@ -68,23 +69,22 @@ async function init(msg: Extract<ToWorker, { type: 'init' }>) {
     runningMode: 'VIDEO', numHands: 1,
   });
 
-  let delegate: 'GPU' | 'CPU' = 'GPU';
   let gpuError = '';
   if (msg.delegate !== 'cpu') {
     post({ type: 'stage', name: 'iniciando GPU' });
-    try { landmarker = await withTimeout(create('GPU'), GPU_TIMEOUT_MS, 'GPU'); done('GPU'); }
+    try { landmarkers.GPU = await withTimeout(create('GPU'), GPU_TIMEOUT_MS, 'GPU'); done('GPU'); }
     catch (e) {
       gpuError = describe(e);
       if (msg.delegate === 'gpu') throw new Error(`GPU: ${gpuError}`);
     }
   }
-  if (!landmarker) {
+  if (msg.delegate !== 'gpu') {
     post({ type: 'stage', name: 'iniciando CPU' });
-    landmarker = await create('CPU');
-    delegate = 'CPU';
+    landmarkers.CPU = await create('CPU');
     done('CPU');
   }
-  post({ type: 'ready', delegate, ms: Math.round(performance.now() - t0), gpuError, log });
+  const delegates = (['GPU', 'CPU'] as const).filter((d) => landmarkers[d]);
+  post({ type: 'ready', delegates: [...delegates], ms: Math.round(performance.now() - t0), gpuError, log });
 }
 
 scope.addEventListener('message', (e) => {
@@ -94,6 +94,7 @@ scope.addEventListener('message', (e) => {
     return;
   }
   if (msg.type === 'frame') {
+    const landmarker = landmarkers[msg.delegate] ?? landmarkers.GPU ?? landmarkers.CPU;
     if (!landmarker) { msg.bitmap.close(); post({ type: 'result', t: msg.t, ms: 0, landmarks: null }); return; }
     const t0 = performance.now();
     let landmarks: { x: number; y: number }[] | null = null;

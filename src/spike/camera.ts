@@ -36,7 +36,10 @@ let lastError = '';
 // ---------- worker ----------
 const worker = new Worker(new URL('./hand-worker.ts', import.meta.url));
 const send = (m: ToWorker, transfer: Transferable[] = []) => worker.postMessage(m, transfer);
-let ready = false, delegate = '', modelMs = 0, gpuError = '';
+let ready = false, modelMs = 0, gpuError = '';
+let delegates: ('GPU' | 'CPU')[] = [];
+/** Current detection setup; the benchmark tries the combinations and keeps the best. */
+const cfg = { delegate: 'GPU' as 'GPU' | 'CPU', input: 0, renderCap: 30 };
 let stage = 'iniciando worker', stageStart = performance.now();
 let stageLog: string[] = [];
 let dl = { bytes: 0, total: 0, start: 0, end: 0 };
@@ -50,7 +53,7 @@ worker.addEventListener('message', (e: MessageEvent<FromWorker>) => {
     dl.bytes = m.bytes; dl.total = m.total;
     if (m.done) dl.end = performance.now();
   }
-  else if (m.type === 'ready') { ready = true; delegate = m.delegate; modelMs = m.ms; gpuError = m.gpuError; stageLog = m.log; }
+  else if (m.type === 'ready') { ready = true; delegates = m.delegates; cfg.delegate = m.delegates[0]; modelMs = m.ms; gpuError = m.gpuError; stageLog = m.log; benchBtn.disabled = !stream; }
   else if (m.type === 'error') { lastError = 'modelo: ' + m.message; }
   else if (m.type === 'result') { busy = false; onResult(m.landmarks, m.ms); }
 });
@@ -67,8 +70,11 @@ async function pump() {
   if (!ready || busy || video.readyState < 2) return;
   busy = true;
   try {
-    const bitmap = await createImageBitmap(video);
-    send({ type: 'frame', bitmap, t: performance.now() }, [bitmap]);
+    const opts: ImageBitmapOptions | undefined = cfg.input
+      ? { resizeWidth: cfg.input, resizeHeight: Math.round((cfg.input * video.videoHeight) / video.videoWidth), resizeQuality: 'low' }
+      : undefined;
+    const bitmap = await createImageBitmap(video, opts);
+    send({ type: 'frame', bitmap, t: performance.now(), delegate: cfg.delegate }, [bitmap]);
   } catch (e) {
     busy = false;
   }
@@ -79,6 +85,7 @@ const inferTimes: number[] = [];
 const inferStamps: number[] = [];
 const renderStamps: number[] = [];
 let frames = 0, framesWithHand = 0;
+function resetStats() { inferTimes.length = 0; inferStamps.length = 0; renderStamps.length = 0; frames = 0; framesWithHand = 0; }
 function pushWindow(arr: number[], v: number, max = 90) { arr.push(v); if (arr.length > max) arr.shift(); }
 function rate(stamps: number[]) {
   if (stamps.length < 2) return 0;
@@ -169,6 +176,7 @@ async function startCamera() {
   await video.play();
   computeMap();
   recordBtn.disabled = false;
+  benchBtn.disabled = !ready;
   startBtn.textContent = 'Reiniciar câmera';
 }
 startBtn.addEventListener('click', startCamera);
@@ -232,12 +240,17 @@ function track(lm: Pt[], now: number) {
 // ---------- render loop (never waits for detection) ----------
 const CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
 let lastFrameT = performance.now();
+let lastDraw = 0;
 
 function loop() {
   const now = performance.now();
-  const dt = Math.min(0.1, (now - lastFrameT) / 1000); lastFrameT = now;
-  pushWindow(renderStamps, now);
   pump();
+  benchTick(now);
+  // Capping the draw rate leaves GPU time for the detector running in the worker.
+  if (now - lastDraw < 1000 / cfg.renderCap - 2) { requestAnimationFrame(loop); return; }
+  const dt = Math.min(0.1, (now - lastFrameT) / 1000); lastFrameT = now;
+  lastDraw = now;
+  pushWindow(renderStamps, now);
 
   if (tip && cursor) {
     // Exponential ease toward the latest detection; ~90% of the way in 100 ms.
@@ -290,15 +303,68 @@ function hudText() {
   return [
     `versão ${__BUILD__} · worker · modo ${DELEGATE_PREF} · modelo de ${MODEL_SRC}`,
     ready
-      ? `modelo ok (${delegate}, ${modelMs} ms)${gpuError ? ` · GPU falhou: ${gpuError}` : ''}`
+      ? `modelo ok (${delegates.join('+')}, ${modelMs} ms) · usando ${cfg.delegate} · entrada ${cfg.input || 'inteira'} · tela máx ${cfg.renderCap}${gpuError ? ` · GPU falhou: ${gpuError}` : ''}`
       : lastError ? 'modelo falhou' : `${stage}… ${elapsed.toFixed(0)}s${elapsed > 15 ? ' (TRAVOU AQUI?)' : ''}`,
     dl.bytes ? `download: ${(dl.bytes / 1e6).toFixed(2)}${dl.total ? ` / ${(dl.total / 1e6).toFixed(2)}` : ''} MB · ${speed.toFixed(2)} MB/s` : '',
     stageLog.length ? `etapas: ${stageLog.join(' · ')}` : '',
     `detecção: ${rate(inferStamps).toFixed(1)} fps · ${median(inferTimes).toFixed(1)} ms/quadro (mediana)`,
     `tela: ${rate(renderStamps).toFixed(0)} fps · câmera ${video.videoWidth}×${video.videoHeight}`,
     `mão visível: ${handPct}% · raspadas: ${scrapeHits} · adesivos: ${scraped} · tchaus: ${waves}`,
+    benchRows.length ? 'TESTE AUTOMÁTICO:\n' + benchRows.join('\n') : '',
     lastError ? `ERRO: ${lastError}` : '',
   ].filter(Boolean).join('\n');
+}
+
+// ---------- automatic benchmark ----------
+// Runs each setup for BENCH_MS with the user's hand in view, then keeps the best one.
+const BENCH_MS = 10_000, WARMUP_MS = 2_000;
+const benchBtn = $<HTMLButtonElement>('#bench');
+const benchRows: string[] = [];
+let bench: { queue: { delegate: 'GPU' | 'CPU'; input: number }[]; i: number; start: number; measured: boolean; results: { label: string; det: number; ms: number; hand: number; tela: number; c: { delegate: 'GPU' | 'CPU'; input: number } }[] } | null = null;
+
+benchBtn.addEventListener('click', () => {
+  const queue: { delegate: 'GPU' | 'CPU'; input: number }[] = [];
+  for (const d of delegates) for (const input of [0, 256]) queue.push({ delegate: d, input });
+  bench = { queue, i: -1, start: 0, measured: false, results: [] };
+  benchRows.length = 0;
+  benchBtn.disabled = true;
+  nextBench(performance.now());
+});
+
+function nextBench(now: number) {
+  if (!bench) return;
+  bench.i++;
+  if (bench.i >= bench.queue.length) return finishBench();
+  Object.assign(cfg, bench.queue[bench.i], { renderCap: 30 });
+  bench.start = now; bench.measured = false;
+  resetStats();
+}
+
+function benchTick(now: number) {
+  if (!bench) return;
+  const c = bench.queue[bench.i];
+  const left = Math.ceil((bench.start + BENCH_MS - now) / 1000);
+  msg.textContent = `${bench.i + 1}/${bench.queue.length} · ${c.delegate} · ${c.input || 'inteira'} · mexa a mão · ${left}s`;
+  msgUntil = now + 200;
+  if (!bench.measured && now - bench.start > WARMUP_MS) { resetStats(); bench.measured = true; }
+  if (now - bench.start < BENCH_MS) return;
+  const hand = frames ? Math.round((framesWithHand / frames) * 100) : 0;
+  const r = { label: `${c.delegate} ${c.input || 'inteira'}`, det: rate(inferStamps), ms: median(inferTimes), hand, tela: rate(renderStamps), c };
+  bench.results.push(r);
+  benchRows.push(`${r.label.padEnd(12)} det ${r.det.toFixed(1)} fps · ${r.ms.toFixed(0)} ms · mão ${r.hand}% · tela ${r.tela.toFixed(0)}`);
+  nextBench(now);
+}
+
+function finishBench() {
+  if (!bench) return;
+  // Detection rate matters most; a setup that rarely sees the hand is penalised.
+  const score = (r: { det: number; hand: number }) => r.det * (r.hand >= 60 ? 1 : 0.5);
+  const best = [...bench.results].sort((a, b) => score(b) - score(a))[0];
+  if (best) { Object.assign(cfg, best.c); benchRows.push(`melhor: ${best.label} (em uso agora)`); }
+  bench = null;
+  benchBtn.disabled = false;
+  resetStats();
+  say('teste pronto');
 }
 
 // ---------- recording test ----------

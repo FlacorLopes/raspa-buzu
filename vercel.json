@@ -10,7 +10,7 @@
   "redirects": [
     {
       "source": "/",
-      "destination": "/spike/camera.html",
+      "destination": "/camera/",
       "permanent": false
     }
   ]

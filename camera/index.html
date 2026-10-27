@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Raspa Buzu · modo câmera</title>
+<meta name="description" content="Raspe o adesivo do 13 do para-brisa com a mão e grave o vídeo. Sátira sobre os ônibus retidos em Salvador no 2º turno.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Bungee&family=VT323&display=swap">
+<style>
+  /* One-screen game: the 9:16 canvas fills the phone; intro/end are signboards over it. */
+  :root {
+    --asphalt: #16191a; --panel: #1e2324; --line: #3a4243;
+    --hazard: #f5c518; --hazard-deep: #a8850a; --red: #d4251c; --led: #ffae1a;
+    --go: #1f9d55; --go-deep: #12663a; --ink: #f3f1ea; --mute: #9ba5a4;
+    --f-display: "Bungee", "Arial Black", Impact, sans-serif;
+    --f-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --f-led: "VT323", "Courier New", monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; margin: 0; background: #000; color: var(--ink); font-family: var(--f-body); overflow: hidden; }
+  [hidden] { display: none !important; }
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; }
+  canvas { height: 100%; max-width: 100%; aspect-ratio: 9 / 16; object-fit: contain; }
+  .overlay {
+    position: fixed; inset: 0; overflow-y: auto; background: rgba(16, 19, 20, 0.94);
+    padding-inline: 16px; padding-block: calc(20px + env(safe-area-inset-top, 0px)) calc(24px + env(safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+  }
+  .sheet { max-width: 520px; margin: 0 auto; display: grid; gap: 14px; }
+  .stripe { height: 12px; border-radius: 3px; background: repeating-linear-gradient(-45deg, var(--hazard) 0 14px, var(--asphalt) 14px 28px); }
+  .kicker { font-family: var(--f-led); font-size: 22px; color: var(--led); }
+  h1 { font-family: var(--f-display); font-weight: 400; font-size: clamp(44px, 14vw, 72px); line-height: .92; margin: 0; color: var(--hazard); }
+  h1 span { color: var(--ink); }
+  .lead { font-size: 17px; line-height: 1.5; margin: 0; }
+  .lead strong { color: var(--hazard); }
+  .how { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font-size: 15px; line-height: 1.45; }
+  .how .ico { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; font-family: var(--f-display); font-size: 12px; }
+  .ico.r { background: var(--red); color: #fff; border-radius: 50%; }
+  .ico.g { background: var(--go); color: #fff; font-size: 18px; }
+  .ico.d { background: #1d6fd6; color: #fff; font-size: 16px; }
+  .ico.b { background: var(--hazard); color: var(--asphalt); font-size: 10px; }
+  .privacy { font-size: 13px; line-height: 1.5; color: var(--mute); margin: 0; border-left: 3px solid var(--go); padding-left: 10px; }
+  .btn { font-family: var(--f-display); font-size: 18px; background: var(--hazard); color: var(--asphalt); border: 0; border-radius: 8px; padding: 14px 18px; box-shadow: 0 4px 0 var(--hazard-deep); cursor: pointer; text-decoration: none; text-align: center; }
+  .btn:disabled { opacity: .6; }
+  .btn.go { background: var(--go); color: #fff; box-shadow: 0 4px 0 var(--go-deep); }
+  .btn.ghost { background: var(--panel); color: var(--ink); box-shadow: none; border: 1px solid var(--line); }
+  .btn:focus-visible { outline: 3px solid var(--led); outline-offset: 2px; }
+  .status { font-family: var(--f-led); font-size: 20px; color: var(--mute); margin: 0; }
+  .err { color: #ff8d84; font-size: 14px; margin: 0; }
+  .tip { font-size: 14px; color: var(--mute); margin: 0; line-height: 1.45; }
+  .score { font-family: var(--f-display); font-size: clamp(72px, 24vw, 120px); line-height: .9; color: var(--hazard); }
+  .rank { justify-self: start; font-family: var(--f-display); font-size: 18px; background: var(--ink); color: var(--asphalt); padding: 4px 10px; border-radius: 4px; }
+  video { width: 100%; max-height: 52vh; border-radius: 10px; background: #000; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .row .btn { flex: 1 1 140px; }
+  .fine { font-size: 12px; color: var(--mute); margin: 0; line-height: 1.5; }
+  .fine a { color: var(--led); }
+</style>
+</head>
+<body>
+  <div id="stage"><canvas id="cv" width="720" height="1280" aria-label="Câmera com a frente do ônibus; raspe o adesivo do 13 com o dedo"></canvas></div>
+
+  <section class="overlay" id="intro">
+    <div class="sheet">
+      <div class="stripe"></div>
+      <div class="kicker">SALVADOR · DOM 25/10 · 2º TURNO</div>
+      <h1>Raspa <span>Buzu</span></h1>
+      <p class="lead">Modo câmera: o adesivo do 13 está no para-brisa e <strong>a espátula é o seu dedo</strong>. 60 segundos. O vídeo sai pronto pra compartilhar.</p>
+      <div class="how">
+        <span class="ico r">13</span><span>Esfregue o indicador em cima do adesivo vermelho até ele sair.</span>
+        <span class="ico g">✋</span><span>Ônibus sem o 13? Dê <b>tchau</b> com a mão aberta e ele vai pra rua.</span>
+        <span class="ico d">♿</span><span>O adesivo de acessibilidade é obrigatório e o do Bahêa pode ficar. Raspar custa ponto.</span>
+        <span class="ico b">12h20</span><span>Às 12h20 chega a ordem: pode sair adesivado mesmo.</span>
+      </div>
+      <p class="tip">Apoie o celular em pé, a uns 50 cm, com boa luz. Use uma mão só.</p>
+      <p class="privacy">A câmera roda só no seu celular. Nenhuma imagem é enviada. O vídeo fica com você e só sai se você compartilhar.</p>
+      <button class="btn go" id="startBtn" type="button">Ligar câmera</button>
+      <p class="status" id="loadStatus">Carregando o detector de mão…</p>
+      <p class="err" id="startErr"></p>
+      <p class="fine">Sátira. As mensagens do “secretário” e a gente no ponto são ficção do jogo. Os fatos (75 ônibus retidos, normalização às 12h20, mandado revogado) vêm da imprensa: <a href="https://www.correio24horas.com.br/eleicoes/prefeitura-de-salvador-diz-que-frota-de-onibus-foi-normalizada-apos-problemas-em-garagens-por-adesivos-eleitorais-1026" target="_blank" rel="noopener">Correio</a>, <a href="https://www.infomoney.com.br/politica/justica-revoga-pedido-de-prisao-de-secretario-municipal-de-salvador/" target="_blank" rel="noopener">InfoMoney</a>, <a href="https://www.bnews.com.br/noticias/politica/rodoviario-denuncia-ordem-para-impedir-circulacao-de-onibus-com-adesivos-do-pt-em-salvador.html" target="_blank" rel="noopener">BNews</a>.</p>
+    </div>
+  </section>
+
+  <section class="overlay" id="end" hidden>
+    <div class="sheet">
+      <div class="stripe"></div>
+      <div class="score" id="eScore">0</div>
+      <div>adesivos raspados com a mão em 60 segundos</div>
+      <div class="rank" id="eRank"></div>
+      <p class="lead" id="eLine"></p>
+      <video id="eVideo" controls playsinline hidden></video>
+      <div class="row">
+        <button class="btn go" id="eShare" type="button" hidden>Compartilhar vídeo</button>
+        <a class="btn ghost" id="eDownload" hidden>Baixar vídeo</a>
+      </div>
+      <button class="btn" id="eAgain" type="button">Raspar de novo</button>
+      <p class="fine">Sátira. Mensagens do “secretário” e gente no ponto são ficção do jogo.</p>
+    </div>
+  </section>
+
+  <script type="module" src="../src/camera/main.ts"></script>
+</body>
+</html>

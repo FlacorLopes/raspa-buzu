@@ -78,7 +78,7 @@ export function busSpec(seed: number, i: number): BusSpec {
   let wu = span[0] + r() * (span[1] - span[0]);
   if (!left) wu = 1 - wu;
   // Bottom of the windshield holds the small route display and the accessibility sticker.
-  const wv = 0.18 + r() * 0.42;
+  const wv = 0.18 + r() * 0.32;
   const rot = (r() - 0.5) * (kind === 'decoy' ? 0.2 : 0.5);
 
   const livery: Livery = r() < YELLOW_SHARE ? 'amarelo' : 'verde';

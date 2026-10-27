@@ -1,21 +1,20 @@
 // Camera spike: can a phone track a hand fast enough to scrape a sticker and record the result?
-// Measures inference/render FPS, tries the scrape and wave gestures, and records a 5s clip.
+// Detection runs in a worker (hand-worker.ts); this thread draws, tracks gestures and records.
 
-import { FilesetResolver, HandLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision';
+import type { FromWorker, ToWorker } from './hand-worker.ts';
 
+type Pt = { x: number; y: number };
+
+const params = new URLSearchParams(location.search);
 const MODEL_URLS: Record<string, string> = {
   local: '/mediapipe/hand_landmarker.task',
   google: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
 };
 /** ?m=local (default) | google picks where the model is downloaded from. */
-const MODEL_SRC = new URLSearchParams(location.search).get('m') === 'google' ? 'google' : 'local';
-const MODEL_URL = MODEL_URLS[MODEL_SRC];
-let dlBytes = 0, dlTotal = 0, dlStart = 0, dlEnd = 0;
-const WASM_BASE = '/mediapipe/wasm';
-declare const __BUILD__: string;
+const MODEL_SRC = params.get('m') === 'google' ? 'google' : 'local';
 /** ?d=gpu | cpu | auto (default) picks the inference delegate. */
-const DELEGATE_PREF = (new URLSearchParams(location.search).get('d') ?? 'auto').toLowerCase();
-const GPU_TIMEOUT_MS = 12_000;
+const DELEGATE_PREF = (['gpu', 'cpu'].includes(params.get('d') ?? '') ? params.get('d') : 'auto') as 'auto' | 'gpu' | 'cpu';
+declare const __BUILD__: string;
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 const cv = $<HTMLCanvasElement>('#cv');
@@ -24,7 +23,6 @@ const hud = $<HTMLDivElement>('#hud');
 const msg = $<HTMLDivElement>('#msg');
 const startBtn = $<HTMLButtonElement>('#start');
 const resSel = $<HTMLSelectElement>('#res');
-const everySel = $<HTMLSelectElement>('#every');
 const recordBtn = $<HTMLButtonElement>('#record');
 const W = cv.width, H = cv.height;
 
@@ -32,11 +30,49 @@ const video = document.createElement('video');
 video.playsInline = true;
 video.muted = true;
 
-let landmarker: HandLandmarker | null = null;
-let delegate: 'GPU' | 'CPU' = 'GPU';
-let modelMs = 0;
 let stream: MediaStream | null = null;
 let lastError = '';
+
+// ---------- worker ----------
+const worker = new Worker(new URL('./hand-worker.ts', import.meta.url));
+const send = (m: ToWorker, transfer: Transferable[] = []) => worker.postMessage(m, transfer);
+let ready = false, delegate = '', modelMs = 0, gpuError = '';
+let stage = 'iniciando worker', stageStart = performance.now();
+let stageLog: string[] = [];
+let dl = { bytes: 0, total: 0, start: 0, end: 0 };
+let busy = false;
+
+worker.addEventListener('message', (e: MessageEvent<FromWorker>) => {
+  const m = e.data;
+  if (m.type === 'stage') { stage = m.name; stageStart = performance.now(); }
+  else if (m.type === 'progress') {
+    if (!dl.start) dl.start = performance.now();
+    dl.bytes = m.bytes; dl.total = m.total;
+    if (m.done) dl.end = performance.now();
+  }
+  else if (m.type === 'ready') { ready = true; delegate = m.delegate; modelMs = m.ms; gpuError = m.gpuError; stageLog = m.log; }
+  else if (m.type === 'error') { lastError = 'modelo: ' + m.message; }
+  else if (m.type === 'result') { busy = false; onResult(m.landmarks, m.ms); }
+});
+worker.addEventListener('error', (e) => { lastError = 'worker: ' + (e.message || 'falhou ao iniciar'); });
+send({
+  type: 'init',
+  wasmBase: new URL('/mediapipe/wasm', location.href).href,
+  modelUrl: new URL(MODEL_URLS[MODEL_SRC], location.href).href,
+  delegate: DELEGATE_PREF,
+});
+
+// Hand a frame to the worker only when it is idle, so frames never queue up.
+async function pump() {
+  if (!ready || busy || video.readyState < 2) return;
+  busy = true;
+  try {
+    const bitmap = await createImageBitmap(video);
+    send({ type: 'frame', bitmap, t: performance.now() }, [bitmap]);
+  } catch (e) {
+    busy = false;
+  }
+}
 
 // ---------- stats ----------
 const inferTimes: number[] = [];
@@ -75,21 +111,23 @@ const fx = new OneEuro(), fy = new OneEuro();
 // ---------- game-ish state ----------
 const sticker = { x: W * 0.35, y: H * 0.62, r: W * 0.075, hp: 3 };
 let scraped = 0, scrapeHits = 0, waves = 0;
-let tip: { x: number; y: number; t: number } | null = null;
+/** Last detected fingertip (canvas px). */
+let tip: (Pt & { t: number }) | null = null;
+/** Fingertip as drawn: eases toward `tip` every frame, so the cursor moves at render rate. */
+let cursor: Pt | null = null;
 let pathAcc = 0;
 const wristHist: { x: number; t: number }[] = [];
 let waveCooldown = 0;
 let msgUntil = 0;
+let lastLandmarks: Pt[] | null = null;
 
 function respawnSticker() {
   sticker.x = W * (0.2 + Math.random() * 0.6);
   sticker.y = H * (0.5 + Math.random() * 0.25);
   sticker.hp = 3;
 }
-
 function say(text: string) { msg.textContent = text; msgUntil = performance.now() + 700; }
 
-// Distance from point to segment.
 function segDist(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
   const vx = bx - ax, vy = by - ay;
   const len2 = vx * vx + vy * vy || 1;
@@ -97,9 +135,9 @@ function segDist(px: number, py: number, ax: number, ay: number, bx: number, by:
   return Math.hypot(px - (ax + k * vx), py - (ay + k * vy));
 }
 
-function isOpenPalm(lm: NormalizedLandmark[]) {
+function isOpenPalm(lm: Pt[]) {
   const w = lm[0];
-  const d = (a: NormalizedLandmark) => Math.hypot(a.x - w.x, a.y - w.y);
+  const d = (a: Pt) => Math.hypot(a.x - w.x, a.y - w.y);
   let open = 0;
   for (const [tipI, pipI] of [[8, 6], [12, 10], [16, 14], [20, 18]]) if (d(lm[tipI]) > d(lm[pipI]) * 1.15) open++;
   return open >= 4;
@@ -112,86 +150,9 @@ function computeMap() {
   const s = Math.max(W / vw, H / vh);
   map = { dw: vw * s, dh: vh * s, ox: (W - vw * s) / 2, oy: (H - vh * s) / 2 };
 }
-const toCanvas = (p: NormalizedLandmark) => ({ x: map.ox + (1 - p.x) * map.dw, y: map.oy + p.y * map.dh });
+const toCanvas = (p: Pt) => ({ x: map.ox + (1 - p.x) * map.dw, y: map.oy + p.y * map.dh });
 
-// ---------- setup ----------
-// MediaPipe sometimes rejects with plain strings or events; make every failure readable.
-function describe(e: unknown): string {
-  if (e instanceof Error) return e.message || e.name;
-  if (typeof e === 'string') return e;
-  if (e instanceof Event) return `evento ${e.type}` + (e.target instanceof HTMLScriptElement ? ` (${e.target.src})` : '');
-  try { return JSON.stringify(e); } catch { return String(e); }
-}
-
-let gpuError = '';
-// Loading happens in stages so a stall on the phone shows where it stopped.
-let stage = 'iniciando';
-let stageStart = performance.now();
-const stageLog: string[] = [];
-function enter(name: string) { stage = name; stageStart = performance.now(); }
-function done(label: string) { stageLog.push(`${label} ${((performance.now() - stageStart) / 1000).toFixed(1)}s`); }
-
-function withTimeout<T>(p: Promise<T>, ms: number, label: string) {
-  return Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${label} travou (> ${ms / 1000}s)`)), ms))]);
-}
-
-async function loadModel() {
-  const t0 = performance.now();
-  enter('baixando motor wasm');
-  let fileset;
-  try { fileset = await FilesetResolver.forVisionTasks(WASM_BASE); }
-  catch (e) { throw new Error(`motor wasm: ${describe(e)}`); }
-  done('motor');
-
-  enter('baixando modelo');
-  let model: Uint8Array;
-  try {
-    const res = await fetch(MODEL_URL, { cache: 'no-store' });
-    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-    dlTotal = Number(res.headers.get('content-length')) || 0;
-    dlStart = performance.now();
-    // Read in chunks so the HUD can show whether bytes are arriving at all.
-    const reader = res.body.getReader();
-    const chunks: Uint8Array[] = [];
-    for (;;) {
-      const { done: end, value } = await reader.read();
-      if (end) break;
-      chunks.push(value); dlBytes += value.length;
-    }
-    dlEnd = performance.now();
-    model = new Uint8Array(dlBytes);
-    let off = 0;
-    for (const c of chunks) { model.set(c, off); off += c.length; }
-  } catch (e) { throw new Error(`modelo: ${describe(e)}`); }
-  done(`modelo ${(model.length / 1e6).toFixed(1)}MB`);
-
-  const create = (d: 'GPU' | 'CPU') => HandLandmarker.createFromOptions(fileset, {
-    baseOptions: { modelAssetBuffer: model, delegate: d },
-    runningMode: 'VIDEO', numHands: 1,
-  });
-
-  if (DELEGATE_PREF !== 'cpu') {
-    enter('iniciando GPU');
-    try {
-      landmarker = await withTimeout(create('GPU'), GPU_TIMEOUT_MS, 'GPU');
-      delegate = 'GPU';
-      done('GPU');
-    } catch (e) {
-      gpuError = describe(e);
-      if (DELEGATE_PREF === 'gpu') throw new Error(`GPU: ${gpuError}`);
-    }
-  }
-  if (!landmarker) {
-    enter('iniciando CPU');
-    try { landmarker = await create('CPU'); }
-    catch (e) { throw new Error(`CPU: ${describe(e)}${gpuError ? ` | GPU: ${gpuError}` : ''}`); }
-    delegate = 'CPU';
-    done('CPU');
-  }
-  stage = 'pronto';
-  modelMs = Math.round(performance.now() - t0);
-}
-
+// ---------- camera ----------
 async function startCamera() {
   stream?.getTracks().forEach((t) => t.stop());
   const h = Number(resSel.value);
@@ -201,7 +162,7 @@ async function startCamera() {
       audio: false,
     });
   } catch (e) {
-    lastError = 'câmera: ' + describe(e);
+    lastError = 'câmera: ' + (e instanceof Error ? e.message : String(e));
     return;
   }
   video.srcObject = stream;
@@ -210,69 +171,38 @@ async function startCamera() {
   recordBtn.disabled = false;
   startBtn.textContent = 'Reiniciar câmera';
 }
-
 startBtn.addEventListener('click', startCamera);
-const modelSel = $<HTMLSelectElement>('#modelSrc');
-modelSel.value = MODEL_SRC;
-modelSel.addEventListener('change', () => {
-  const u = new URL(location.href);
-  u.searchParams.set('m', modelSel.value);
-  location.href = u.toString();
-});
-const delegateSel = $<HTMLSelectElement>('#delegate');
-delegateSel.value = ['gpu', 'cpu'].includes(DELEGATE_PREF) ? DELEGATE_PREF : 'auto';
-delegateSel.addEventListener('change', () => {
-  const u = new URL(location.href);
-  u.searchParams.set('d', delegateSel.value);
-  location.href = u.toString();
-});
 resSel.addEventListener('change', () => { if (stream) startCamera(); });
 
-// ---------- detection input ----------
-// Sending the full camera frame to the GPU is expensive; optionally shrink it first.
-const inputSel = $<HTMLSelectElement>('#input');
-const small = document.createElement('canvas');
-const smallCtx = small.getContext('2d')!;
-function detectionSource(): HTMLVideoElement | HTMLCanvasElement {
-  const w = Number(inputSel.value);
-  if (!w || !video.videoWidth) return video;
-  const h = Math.round((w * video.videoHeight) / video.videoWidth);
-  if (small.width !== w || small.height !== h) { small.width = w; small.height = h; }
-  smallCtx.drawImage(video, 0, 0, w, h);
-  return small;
+function reloadWith(key: string, value: string) {
+  const u = new URL(location.href);
+  u.searchParams.set(key, value);
+  location.href = u.toString();
 }
+const modelSel = $<HTMLSelectElement>('#modelSrc');
+modelSel.value = MODEL_SRC;
+modelSel.addEventListener('change', () => reloadWith('m', modelSel.value));
+const delegateSel = $<HTMLSelectElement>('#delegate');
+delegateSel.value = DELEGATE_PREF;
+delegateSel.addEventListener('change', () => reloadWith('d', delegateSel.value));
 
-// ---------- loop ----------
-let frameNo = 0;
-let lastVideoTime = -1;
-let lastLandmarks: NormalizedLandmark[] | null = null;
-
-function loop() {
+// ---------- detection results ----------
+function onResult(landmarks: Pt[] | null, ms: number) {
   const now = performance.now();
-  pushWindow(renderStamps, now);
-
-  if (landmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
-    lastVideoTime = video.currentTime;
-    frameNo++;
-    if (frameNo % Number(everySel.value) === 0) {
-      const t0 = performance.now();
-      const res = landmarker.detectForVideo(detectionSource(), t0);
-      pushWindow(inferTimes, performance.now() - t0);
-      pushWindow(inferStamps, t0);
-      frames++;
-      lastLandmarks = res.landmarks[0] ?? null;
-      if (lastLandmarks) { framesWithHand++; track(lastLandmarks, now); } else { tip = null; fx.reset(); fy.reset(); }
-    }
-  }
-  draw(now);
-  requestAnimationFrame(loop);
+  pushWindow(inferTimes, ms);
+  pushWindow(inferStamps, now);
+  frames++;
+  lastLandmarks = landmarks;
+  if (!landmarks) { tip = null; fx.reset(); fy.reset(); return; }
+  framesWithHand++;
+  track(landmarks, now);
 }
 
-function track(lm: NormalizedLandmark[], now: number) {
+function track(lm: Pt[], now: number) {
   const raw = toCanvas(lm[8]);
   const p = { x: fx.filter(raw.x, now), y: fy.filter(raw.y, now), t: now };
 
-  // Scrape: fingertip path crossing the sticker fast enough.
+  // Scrape: fingertip path between two detections crossing the sticker fast enough.
   if (tip) {
     const dist = Math.hypot(p.x - tip.x, p.y - tip.y);
     const speed = dist / Math.max(1, p.t - tip.t); // px per ms
@@ -287,28 +217,47 @@ function track(lm: NormalizedLandmark[], now: number) {
     }
   }
   tip = p;
+  if (!cursor) cursor = { x: p.x, y: p.y };
 
   // Wave: open palm moving sideways fast.
   const wrist = toCanvas(lm[0]);
   wristHist.push({ x: wrist.x, t: now });
-  while (wristHist.length && now - wristHist[0].t > 350) wristHist.shift();
+  while (wristHist.length && now - wristHist[0].t > 400) wristHist.shift();
   if (now > waveCooldown && isOpenPalm(lm) && wristHist.length > 2) {
     const dx = wristHist[wristHist.length - 1].x - wristHist[0].x;
     if (Math.abs(dx) > W * 0.28) { waves++; waveCooldown = now + 900; say('TCHAU! 👋'); wristHist.length = 0; }
   }
 }
 
+// ---------- render loop (never waits for detection) ----------
 const CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+let lastFrameT = performance.now();
+
+function loop() {
+  const now = performance.now();
+  const dt = Math.min(0.1, (now - lastFrameT) / 1000); lastFrameT = now;
+  pushWindow(renderStamps, now);
+  pump();
+
+  if (tip && cursor) {
+    // Exponential ease toward the latest detection; ~90% of the way in 100 ms.
+    const k = 1 - Math.exp(-dt * 23);
+    cursor.x += (tip.x - cursor.x) * k;
+    cursor.y += (tip.y - cursor.y) * k;
+  } else if (!tip) cursor = null;
+
+  draw(now);
+  requestAnimationFrame(loop);
+}
 
 function draw(now: number) {
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
   if (video.readyState >= 2) {
-    if (!map.dw || video.videoWidth) computeMap();
+    computeMap();
     ctx.save(); ctx.translate(W, 0); ctx.scale(-1, 1);
     ctx.drawImage(video, W - map.ox - map.dw, map.oy, map.dw, map.dh);
     ctx.restore();
   }
-  // windshield frame + sticker target
   ctx.strokeStyle = 'rgba(245,197,24,.8)'; ctx.lineWidth = 6;
   ctx.strokeRect(W * 0.08, H * 0.42, W * 0.84, H * 0.42);
   ctx.save(); ctx.translate(sticker.x, sticker.y);
@@ -320,14 +269,12 @@ function draw(now: number) {
 
   if (lastLandmarks) {
     const pts = lastLandmarks.map(toCanvas);
-    ctx.strokeStyle = 'rgba(31,157,85,.9)'; ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(31,157,85,.6)'; ctx.lineWidth = 3;
     for (const [a, b] of CONNECTIONS) { ctx.beginPath(); ctx.moveTo(pts[a].x, pts[a].y); ctx.lineTo(pts[b].x, pts[b].y); ctx.stroke(); }
-    ctx.fillStyle = '#fff'; for (const p of pts) { ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI * 2); ctx.fill(); }
   }
-  if (tip) {
-    ctx.fillStyle = '#f5c518'; ctx.beginPath(); ctx.arc(tip.x, tip.y, 16, 0, Math.PI * 2); ctx.fill();
+  if (cursor) {
+    ctx.fillStyle = '#f5c518'; ctx.beginPath(); ctx.arc(cursor.x, cursor.y, 18, 0, Math.PI * 2); ctx.fill();
   }
-  // burn-in score for the recording test
   ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0, H - 90, W, 90);
   ctx.fillStyle = '#f5c518'; ctx.font = '900 44px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   ctx.fillText(`RASPA BUZU · ${scraped}`, 24, H - 32);
@@ -338,12 +285,14 @@ function draw(now: number) {
 
 function hudText() {
   const handPct = frames ? Math.round((framesWithHand / frames) * 100) : 0;
+  const elapsed = (performance.now() - stageStart) / 1000;
+  const speed = dl.start ? (dl.bytes / 1e6) / Math.max(0.001, ((dl.end || performance.now()) - dl.start) / 1000) : 0;
   return [
-    `versão ${__BUILD__} · modo ${DELEGATE_PREF} · modelo de ${MODEL_SRC}`,
-    landmarker
+    `versão ${__BUILD__} · worker · modo ${DELEGATE_PREF} · modelo de ${MODEL_SRC}`,
+    ready
       ? `modelo ok (${delegate}, ${modelMs} ms)${gpuError ? ` · GPU falhou: ${gpuError}` : ''}`
-      : lastError ? 'modelo falhou' : `${stage}… ${((performance.now() - stageStart) / 1000).toFixed(0)}s${performance.now() - stageStart > 15000 ? ' (TRAVOU AQUI?)' : ''}`,
-    stage === 'baixando modelo' || dlBytes ? `download (${MODEL_SRC}): ${(dlBytes / 1e6).toFixed(2)}${dlTotal ? ` / ${(dlTotal / 1e6).toFixed(2)}` : ''} MB · ${dlStart ? ((dlBytes / 1e6) / Math.max(0.001, ((dlEnd || performance.now()) - dlStart) / 1000)).toFixed(2) : '0'} MB/s` : '',
+      : lastError ? 'modelo falhou' : `${stage}… ${elapsed.toFixed(0)}s${elapsed > 15 ? ' (TRAVOU AQUI?)' : ''}`,
+    dl.bytes ? `download: ${(dl.bytes / 1e6).toFixed(2)}${dl.total ? ` / ${(dl.total / 1e6).toFixed(2)}` : ''} MB · ${speed.toFixed(2)} MB/s` : '',
     stageLog.length ? `etapas: ${stageLog.join(' · ')}` : '',
     `detecção: ${rate(inferStamps).toFixed(1)} fps · ${median(inferTimes).toFixed(1)} ms/quadro (mediana)`,
     `tela: ${rate(renderStamps).toFixed(0)} fps · câmera ${video.videoWidth}×${video.videoHeight}`,
@@ -396,7 +345,7 @@ recordBtn.addEventListener('click', () => {
 recShare.addEventListener('click', async () => {
   if (!recFile) return;
   try { await navigator.share({ files: [recFile], title: 'Raspa Buzu', text: 'Teste do modo câmera' }); recResult += ' · share ok'; }
-  catch (e) { recResult += ' · share falhou: ' + (e as Error).name; }
+  catch (e) { recResult += ' · share falhou: ' + (e instanceof Error ? e.name : String(e)); }
   recInfo.textContent = `Gravado: ${recResult}`;
 });
 $<HTMLButtonElement>('#recClose').addEventListener('click', () => { recBox.hidden = true; });
@@ -409,11 +358,10 @@ $<HTMLButtonElement>('#report').addEventListener('click', async () => {
     navigator.userAgent,
     `tela ${screen.width}×${screen.height} @${devicePixelRatio}`,
     hudText(),
-    `detectar a cada: ${everySel.value} · entrada: ${inputSel.value === '0' ? 'câmera inteira' : inputSel.value + 'px'} · gravação: ${recResult}`,
+    `gravação: ${recResult}`,
   ].join('\n');
   try { await navigator.clipboard.writeText(text); say('copiado'); }
   catch { hud.textContent = text; }
 });
 
-loadModel().catch((e) => { lastError = 'modelo: ' + describe(e); });
 requestAnimationFrame(loop);

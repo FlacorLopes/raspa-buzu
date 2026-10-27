@@ -51,13 +51,16 @@ let seed = randomSeed();
 let elapsed = 0;
 let bus: BusState;
 let events: RunEvent[] = [];
-// score = buses sent out minus penalties: the headline number is buses on the street, not stickers.
+// score = buses sent out. It only ever goes up: penalties cost time (the bus is held), not buses.
 let score = 0, scraped = 0, passed = 0, forced = 0, blocked = 0, penalties = 0;
 /** How long each sticker took from the first scrape to coming off, in ms. */
 let ripMs: number[] = [];
 let voters = 300;
 let eventIdx = 0, unlocked = false, arrested = false;
 let lastScrapeT = -Infinity, penaltyCooldown = 0;
+/** Game time until which the current bus is held after a penalty. */
+let holdUntil = 0;
+const PENALTY_HOLD_MS = 1000;
 
 function newBus(i: number, enterAt: number): BusState {
   const spec = busSpec(seed, i);
@@ -71,7 +74,7 @@ function resetRun() {
   ripMs = [];
   releaseTimes = []; mayorCooldown = 0; mayorShownAt = 0;
   voters = 300; eventIdx = 0; unlocked = false; arrested = false;
-  lastScrapeT = -Infinity; penaltyCooldown = 0;
+  lastScrapeT = -Infinity; penaltyCooldown = 0; holdUntil = 0;
   paris = { text: '', until: 0, next: PARIS_FIRST_MS, before: shuffle(PARIS_BEFORE), after: shuffle(PARIS_AFTER) };
   barataFlash = 0;
   banner = { text: '', until: 0 };
@@ -92,7 +95,7 @@ function busRect(now = elapsed): Rect & { a: number } {
 }
 const easeOut = (k: number) => 1 - Math.pow(1 - k, 3);
 const easeIn = (k: number) => k * k * k;
-const interactive = () => mode === 'play' && elapsed >= bus.readyAt && bus.releaseAt === null;
+const interactive = () => mode === 'play' && elapsed >= bus.readyAt && bus.releaseAt === null && elapsed >= holdUntil;
 
 // ---------- camera ----------
 let map = { ox: 0, oy: 0, dw: W, dh: H };
@@ -163,13 +166,14 @@ function scrapeAlong(a: Pt & { t: number }, b: Pt & { t: number }) {
   if (dist / Math.max(1, b.t - a.t) < 0.15) return;   // px/ms: the finger has to be moving
   const t = Math.round(elapsed);
 
-  // Penalty stickers: accessibility (always there) and non-candidate decoys.
+  // Penalty stickers: accessibility (always there) and non-candidate decoys. Only when the
+  // fingertip lands on them, not when a scraping stroke merely passes across.
   if (t > penaltyCooldown) {
     const ac = accessCenter(r);
-    if (segDist(ac.x, ac.y, a, b) < sr * 0.9) { penalty(EV.ACCESS, ACCESS_TOAST, t); return; }
+    if (Math.hypot(b.x - ac.x, b.y - ac.y) < sr * 0.8) { penalty(EV.ACCESS, ACCESS_TOAST, t); return; }
     if (bus.spec.kind === 'decoy') {
       const dc = stickerCenter(r, bus.spec);
-      if (segDist(dc.x, dc.y, a, b) < sr * 1.2) { penalty(EV.DECOY, DECOYS[bus.spec.decoy].toast, t); return; }
+      if (Math.hypot(b.x - dc.x, b.y - dc.y) < sr * 1.1) { penalty(EV.DECOY, DECOYS[bus.spec.decoy].toast, t); return; }
     }
   }
 
@@ -195,10 +199,11 @@ function scrapeAlong(a: Pt & { t: number }, b: Pt & { t: number }) {
 
 function penalty(code: typeof EV.ACCESS | typeof EV.DECOY, text: string, t: number) {
   events.push([t, code]);
-  score = Math.max(0, score - 1); penalties++;
+  penalties++;
+  holdUntil = t + PENALTY_HOLD_MS;
   penaltyCooldown = t + 1200;
   sfx?.bad();
-  toast(`${text} (−1)`);
+  toast(`${text} (perdeu 1 s)`);
 }
 
 function tryRelease() {
@@ -371,6 +376,7 @@ function draw(now: number) {
     drawBusSprite(r);
     ctx.globalAlpha = 1;
     if (bus.releaseAt !== null && elapsed >= bus.releaseAt) stamp(r, bus.how === 'forced' ? 'SAIU ADESIVADO' : 'LIBERADO', bus.how === 'forced' ? '#d4251c' : '#1f9d55');
+    else if (mode === 'play' && elapsed < holdUntil) stamp(r, 'TRAVADO', '#d4251c');
   }
   for (const p of particles) { ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 1.5)); ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, p.s, p.s * 0.6); }
   ctx.globalAlpha = 1;

@@ -1,0 +1,1160 @@
+<meta charset="utf-8">
+<title>Raspa Buzu</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=Bungee&family=VT323&display=swap">
+<style>
+/* Layout: one-screen garage. LED-style HUD strip on top, the garage canvas in the middle,
+   a control bar below; intro/results are painted signboards laid over the garage. */
+:root {
+  --asphalt: #16191a;
+  --wall: #252a2b;
+  --panel: #1e2324;
+  --line: #3a4243;
+  --hazard: #f5c518;
+  --hazard-deep: #a8850a;
+  --red: #d4251c;
+  --led: #ffae1a;
+  --teal: #0e7a80;
+  --ink: #f3f1ea;
+  --mute: #9ba5a4;
+  --scrim: rgba(16, 19, 20, 0.9);
+  --notif-bg: #ffffff;
+  --notif-ink: #15191a;
+  --fr-blue: #1f3fa0;
+  --go: #1f9d55;
+  --go-deep: #12663a;
+  --f-display: "Bungee", "Arial Black", Impact, sans-serif;
+  --f-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-led: "VT323", "Courier New", monospace;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  background: var(--asphalt);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 15px;
+  overflow: hidden;
+}
+#app {
+  height: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding-inline: 16px;
+  padding-block: 10px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+
+/* HUD */
+.hud {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+.stat {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px 2px;
+  min-width: 0;
+}
+.stat .lbl {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stat .val {
+  font-family: var(--f-led);
+  font-size: 30px;
+  line-height: 1;
+  color: var(--led);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 8px rgba(255, 174, 26, 0.35);
+  white-space: nowrap;
+}
+.stat.voters .val { color: var(--ink); text-shadow: none; }
+
+/* Stage */
+.stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--wall);
+}
+#cv { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+
+.banner {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translate(-50%, -140%);
+  max-width: calc(100% - 24px);
+  width: max-content;
+  background: #0b0d0d;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: var(--f-led);
+  font-size: 21px;
+  line-height: 1.1;
+  color: var(--led);
+  text-align: center;
+  transition: transform 0.35s cubic-bezier(.2,.9,.3,1.2);
+  pointer-events: none;
+  text-wrap: balance;
+}
+.banner.show { transform: translate(-50%, 0); }
+
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  background: var(--hazard);
+  color: var(--asphalt);
+  font-weight: 800;
+  padding: 6px 12px;
+  border-radius: 6px;
+  max-width: calc(100% - 24px);
+  width: max-content;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; }
+
+.paris {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: min(330px, calc(100% - 24px));
+  background: var(--notif-bg);
+  color: var(--notif-ink);
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  padding: 10px 12px 10px;
+  display: grid;
+  gap: 6px;
+  animation: drop 0.3s cubic-bezier(.2,.9,.3,1.2);
+}
+@keyframes drop { from { transform: translateY(-120%); } to { transform: none; } }
+.paris .head { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.paris .flag { width: 22px; height: 15px; border-radius: 3px; flex: none;
+  background: linear-gradient(90deg, var(--fr-blue) 0 33%, #ffffff 33% 66%, var(--red) 66%);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.paris .who { font-weight: 800; }
+.paris .when { margin-left: auto; color: #6b7273; }
+.paris .msg { font-size: 15px; line-height: 1.35; }
+.paris button {
+  justify-self: end;
+  font: 600 13px var(--f-body);
+  background: #e9ecec;
+  color: var(--notif-ink);
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+/* Controls */
+.controls { display: flex; gap: 8px; align-items: stretch; }
+.btn {
+  font-family: var(--f-display);
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  background: var(--hazard);
+  color: var(--asphalt);
+  border: 0;
+  border-radius: 8px;
+  padding: 12px 18px;
+  box-shadow: 0 4px 0 var(--hazard-deep);
+  cursor: pointer;
+  transition: transform 0.08s;
+}
+.btn:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--hazard-deep); }
+.btn:focus-visible, .ghost:focus-visible, .share a:focus-visible, .share button:focus-visible, summary:focus-visible, .paris button:focus-visible {
+  outline: 3px solid var(--led);
+  outline-offset: 2px;
+}
+#release {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  background: var(--go);
+  color: #ffffff;
+  box-shadow: 0 4px 0 var(--go-deep);
+  font-size: 17px;
+}
+#release small { font-family: var(--f-body); font-size: 12px; color: #d8f5e3; letter-spacing: 0; }
+#release:active { box-shadow: 0 1px 0 var(--go-deep); }
+#release.flash { animation: pulse 0.6s ease-in-out 4; }
+@keyframes pulse { 50% { filter: brightness(1.25); } }
+.ghost {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 14px;
+  font: 600 13px var(--f-body);
+  cursor: pointer;
+}
+
+/* Overlays */
+.overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  overflow-y: auto;
+  padding-inline: 16px;
+  padding-block: 24px;
+  z-index: 5;
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.sheet {
+  max-width: 560px;
+  margin: 0 auto;
+  display: grid;
+  gap: 16px;
+}
+.stripe {
+  height: 12px;
+  border-radius: 3px;
+  background: repeating-linear-gradient(-45deg, var(--hazard) 0 14px, var(--asphalt) 14px 28px);
+}
+.kicker {
+  font-family: var(--f-led);
+  font-size: 22px;
+  color: var(--led);
+  line-height: 1.1;
+}
+h1 {
+  font-family: var(--f-display);
+  font-weight: 400;
+  font-size: clamp(46px, 13vw, 84px);
+  line-height: 0.92;
+  margin: 0;
+  color: var(--hazard);
+  text-wrap: balance;
+}
+h1 span { color: var(--ink); }
+h2 {
+  font-family: var(--f-display);
+  font-weight: 400;
+  font-size: 20px;
+  margin: 0;
+  text-wrap: balance;
+}
+.lead { font-size: 17px; line-height: 1.5; margin: 0; max-width: 62ch; }
+.lead strong { color: var(--hazard); }
+.how {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  align-items: start;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.how .ico {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-family: var(--f-display); font-size: 11px;
+}
+.ico.r { background: var(--red); color: #fff; }
+.ico.d { background: #1b4fa0; color: #fff; border-radius: 5px; font-size: 9px; }
+.ico.b { background: var(--hazard); color: var(--asphalt); border-radius: 5px; }
+.ico.g { background: var(--go); color: #fff; border-radius: 5px; font-size: 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.best { font-family: var(--f-led); font-size: 20px; color: var(--mute); }
+
+details {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+summary {
+  cursor: pointer;
+  font-weight: 800;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--hazard);
+}
+.facts { margin: 12px 0 0; padding-left: 18px; display: grid; gap: 8px; font-size: 14px; line-height: 1.5; }
+.facts a, .sources a { color: var(--led); }
+.sources { font-size: 12px; color: var(--mute); line-height: 1.6; margin: 10px 0 0; }
+.disclaimer { font-size: 12px; color: var(--mute); line-height: 1.5; margin: 0; }
+
+/* Results */
+.stamp {
+  justify-self: start;
+  font-family: var(--f-display);
+  font-size: 14px;
+  color: var(--red);
+  border: 3px solid var(--red);
+  border-radius: 6px;
+  padding: 4px 10px;
+  transform: rotate(-4deg);
+  letter-spacing: 0.04em;
+}
+.score { display: grid; gap: 2px; }
+.score .big {
+  font-family: var(--f-display);
+  font-size: clamp(64px, 20vw, 120px);
+  line-height: 0.9;
+  color: var(--hazard);
+  font-variant-numeric: tabular-nums;
+}
+.score .unit { font-size: 18px; font-weight: 800; }
+.rank {
+  display: inline-block;
+  font-family: var(--f-display);
+  font-size: 18px;
+  background: var(--ink);
+  color: var(--asphalt);
+  padding: 4px 10px;
+  border-radius: 4px;
+  justify-self: start;
+}
+.verdict { font-size: 16px; line-height: 1.5; margin: 0; }
+.verdict b { color: var(--hazard); }
+.card-img { width: 100%; max-width: 360px; border-radius: 10px; border: 1px solid var(--line); display: block; }
+.cardwrap { display: grid; gap: 6px; justify-items: start; }
+.cardwrap small { color: var(--mute); font-size: 12px; }
+.share { display: flex; flex-wrap: wrap; gap: 8px; }
+.share a, .share button {
+  font: 800 14px var(--f-body);
+  text-decoration: none;
+  border-radius: 8px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+}
+.share .wa { background: #1f9d55; border-color: #1f9d55; color: #fff; }
+#shareText {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 84px;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  font: 14px/1.45 var(--f-body);
+  resize: vertical;
+}
+
+@media (max-width: 560px) {
+  .stat { padding: 3px 7px 1px; }
+  .stat .val { font-size: 24px; }
+  .stat .lbl { font-size: 9px; letter-spacing: 0.04em; }
+  .btn { font-size: 15px; padding: 11px 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #release.flash { animation: none; }
+  .paris { animation: none; }
+  .banner { transition: none; }
+}
+</style>
+
+<div id="app">
+  <header class="hud" aria-live="off">
+    <div class="stat"><div class="lbl">Relógio</div><div class="val" id="hClock">06:00</div></div>
+    <div class="stat"><div class="lbl">Adesivos</div><div class="val" id="hScore">0</div></div>
+    <div class="stat"><div class="lbl">Buzus na rua</div><div class="val" id="hBuses">0</div></div>
+    <div class="stat voters"><div class="lbl">Gente no ponto</div><div class="val" id="hVoters">0</div></div>
+  </header>
+
+  <div class="stage" id="stage">
+    <canvas id="cv" aria-label="Garagem com ônibus adesivado. Toque nos adesivos vermelhos para raspar."></canvas>
+    <div class="banner" id="banner"></div>
+    <div class="toast" id="toast"></div>
+    <div class="paris" id="paris" hidden role="status">
+      <div class="head"><span class="flag" aria-hidden="true"></span><span class="who">Secretário (em Paris)</span><span class="when">agora</span></div>
+      <div class="msg" id="parisMsg"></div>
+      <button id="parisClose" type="button">Merci, fecha</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="release" class="btn" type="button">
+      Liberar ônibus
+      <small id="releaseNote">Só se não tiver adesivo do 13</small>
+    </button>
+    <button id="mute" class="ghost" type="button" aria-pressed="false">Som: ligado</button>
+  </div>
+
+  <section class="overlay" id="intro">
+    <div class="sheet">
+      <div class="stripe"></div>
+      <div class="kicker">SALVADOR · DOM 25/10 · 2º TURNO</div>
+      <h1>Raspa <span>Buzu</span></h1>
+      <p class="lead">Os ônibus da <strong>Garagem 5, no Caminho de Areia</strong>, amanheceram com um adesivo do 13 no para-brisa. Um. Adesivinho. Regra da casa: com adesivo, não sai. Você tem <strong>60 segundos</strong> (das 6h às 17h) para raspar e botar a frota na rua. O secretário está em Paris.</p>
+      <div class="how">
+        <span class="ico r">13</span><span>Cada buzu chega com no máximo um adesivo, no para-brisa. Arraste o dedo em cima pra raspar. Umas três passadas resolvem.</span>
+        <span class="ico g">LIBERAR</span><span>Sem adesivo do 13? Aperte <b>Liberar</b> (ou a barra de espaço) e mande pra rua.</span>
+        <span class="ico d">BAHÊA</span><span>Adesivo de time, de igreja ou de acarajé não é de candidato. Libera, não raspa. Raspar custa ponto.</span>
+        <span class="ico b">12h20</span><span>Às 12h20 chega a ordem: pode sair adesivado mesmo.</span>
+      </div>
+      <div class="row">
+        <button class="btn" id="startBtn" type="button">Abrir a garagem</button>
+        <span class="best" id="bestLine"></span>
+      </div>
+      <details>
+        <summary>O que aconteceu de verdade</summary>
+        <div class="factsSlot"></div>
+      </details>
+      <p class="disclaimer">Sátira. As mensagens do “secretário” e a contagem de gente no ponto são ficção do jogo. Os fatos acima vêm das reportagens linkadas.</p>
+    </div>
+  </section>
+
+  <section class="overlay" id="end" hidden>
+    <div class="sheet">
+      <div class="stripe"></div>
+      <div class="stamp">17H · URNAS FECHADAS</div>
+      <div class="score">
+        <div class="big" id="eScore">0</div>
+        <div class="unit" id="eUnit">adesivos raspados em 60 segundos, um por para-brisa</div>
+      </div>
+      <div class="rank" id="eRank"></div>
+      <p class="verdict" id="eVerdict"></p>
+      <p class="verdict" id="eFacts"></p>
+      <div class="cardwrap">
+        <img class="card-img" id="eCard" alt="Cartão com a sua pontuação no Raspa Buzu">
+        <small>Segure ou clique com o botão direito na imagem para salvar e postar no story.</small>
+      </div>
+      <h2>Desafie a galera</h2>
+      <textarea id="shareText" readonly aria-label="Texto para compartilhar"></textarea>
+      <div class="share">
+        <button type="button" id="shareNative">Compartilhar</button>
+        <a class="wa" id="shareWa" href="#" target="_blank" rel="noopener">WhatsApp</a>
+        <a id="shareX" href="#" target="_blank" rel="noopener">Postar no X</a>
+        <button type="button" id="shareCopy">Copiar texto</button>
+      </div>
+      <div class="row">
+        <button class="btn" id="againBtn" type="button">Raspar de novo</button>
+      </div>
+      <details>
+        <summary>O que aconteceu de verdade</summary>
+        <div class="factsSlot"></div>
+      </details>
+      <p class="disclaimer">Sátira. As mensagens do “secretário” e a contagem de gente no ponto são ficção do jogo.</p>
+    </div>
+  </section>
+</div>
+
+<template id="factsTpl">
+  <ol class="facts">
+    <li>No domingo do 2º turno (25/10), ao menos <b>75 ônibus</b> ficaram retidos em garagens de Salvador, número admitido pela prefeitura. Um rodoviário ouvido pelo BNews falou em mais de 100.</li>
+    <li>A Semob culpou uma “adesivação clandestina” com o número 13, que atribuiu a sindicalistas. O secretário falou em cerca de <b>70% da frota</b> adesivada.</li>
+    <li>O prefeito Bruno Reis disse que a <b>retirada dos adesivos atrasou a operação</b> e que, ao ver o atraso, liberou a saída dos ônibus mesmo adesivados. Ele nega ordem para reduzir a frota.</li>
+    <li>A Semob diz ter sido avisada por volta das <b>9h30</b>. A operação só foi normalizada por volta das <b>12h20</b>.</li>
+    <li>O TRE-BA mandou pôr toda a frota na rua, com tarifa zero e <b>multa de R$ 1 milhão por hora</b>, e mandou a PF prender o secretário de Mobilidade, Pablo Souza.</li>
+    <li>Ele estava em <b>Paris</b>, em missão oficial a convite do governo francês. O mandado foi revogado: com a votação encerrada, a medida “perdeu o objeto”. Os fatos seguem sob apuração.</li>
+  </ol>
+  <p class="sources">Fontes:
+    <a href="https://www.bnews.com.br/noticias/politica/rodoviario-denuncia-ordem-para-impedir-circulacao-de-onibus-com-adesivos-do-pt-em-salvador.html" target="_blank" rel="noopener">BNews</a> ·
+    <a href="https://www.bnews.com.br/noticias/politica/secretario-da-semob-diz-que-frota-de-onibus-em-salvador-foi-a-mesma-nos-dois-turnos-e-nega-historico-de-100-nas-eleicoes.html" target="_blank" rel="noopener">BNews (Semob)</a> ·
+    <a href="https://sbtnews.sbt.com.br/noticia/politica/retirar-adesivos-atrasou-onibus-diz-prefeito-de-salvador-1" target="_blank" rel="noopener">SBT News</a> ·
+    <a href="https://www.correio24horas.com.br/eleicoes/prefeitura-de-salvador-diz-que-frota-de-onibus-foi-normalizada-apos-problemas-em-garagens-por-adesivos-eleitorais-1026" target="_blank" rel="noopener">Correio</a> ·
+    <a href="https://bahia.ba/politica/pablo-souza-culpa-acao-politica-por-falhas-nos-onibus-de-salvador/" target="_blank" rel="noopener">bahia.ba</a> ·
+    <a href="https://agenciabrasil.ebc.com.br/politica/noticia/2026-10/tre-ba-determina-prisao-de-secretario-de-mobilidade-de-salvador" target="_blank" rel="noopener">Agência Brasil</a> ·
+    <a href="https://www.infomoney.com.br/politica/justica-revoga-pedido-de-prisao-de-secretario-municipal-de-salvador/" target="_blank" rel="noopener">InfoMoney</a> ·
+    <a href="https://www.cartacapital.com.br/politica/faltou-onibus-em-salvador-no-2o-turno-oito-dias-apos-camara-dar-titulo-a-flavio-bolsonaro/" target="_blank" rel="noopener">CartaCapital</a>
+  </p>
+</template>
+
+<script>
+(() => {
+  // Link that goes into shared messages. Set to the public address of the game.
+  const SHARE_URL = 'https://claude.ai/artifact/Kkp68f95Wz8i9qZnrGpm4D';
+  const GAME_SECONDS = 60;
+  const RETIDOS = 75;               // ônibus retidos, número admitido pela prefeitura
+  const BUS_CAPACITY = 90;          // gente que cada buzu tira do ponto
+  const STICKERED_SHARE = 0.7;      // "cerca de 70% da frota", segundo o secretário
+  const ANIM = 0.35;
+
+  const $ = (s) => document.querySelector(s);
+  const stage = $('#stage'), cv = $('#cv'), ctx = cv.getContext('2d');
+  const hClock = $('#hClock'), hScore = $('#hScore'), hBuses = $('#hBuses'), hVoters = $('#hVoters');
+  const bannerEl = $('#banner'), toastEl = $('#toast');
+  const parisEl = $('#paris'), parisMsg = $('#parisMsg');
+  const releaseBtn = $('#release'), releaseNote = $('#releaseNote');
+  const fmt = (n) => Math.round(n).toLocaleString('pt-BR');
+  const fmt1 = (n) => n.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+  const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+  document.querySelectorAll('.factsSlot').forEach((el) => el.appendChild($('#factsTpl').content.cloneNode(true)));
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------- storage ----------
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
+  const BEST_KEY = 'raspabuzu.best.v2';
+  function showBest() {
+    const b = parseInt(store.get(BEST_KEY) || '0', 10);
+    $('#bestLine').textContent = b > 0 ? `Seu recorde: ${b} adesivos` : '';
+  }
+  showBest();
+
+  // ---------- audio ----------
+  let ac = null, noiseBuf = null, muted = store.get('raspabuzu.muted') === '1';
+  const muteBtn = $('#mute');
+  function syncMute() { muteBtn.textContent = muted ? 'Som: desligado' : 'Som: ligado'; muteBtn.setAttribute('aria-pressed', String(muted)); }
+  syncMute();
+  muteBtn.addEventListener('click', () => { muted = !muted; store.set('raspabuzu.muted', muted ? '1' : '0'); syncMute(); });
+  function audio() {
+    if (!ac) {
+      try {
+        ac = new (window.AudioContext || window.webkitAudioContext)();
+        noiseBuf = ac.createBuffer(1, ac.sampleRate * 0.2, ac.sampleRate);
+        const d = noiseBuf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      } catch (e) { ac = null; }
+    }
+    if (ac && ac.state === 'suspended') ac.resume().catch(() => {});
+    return ac;
+  }
+  function tone(freq, dur, type = 'sine', gain = 0.06, slideTo = null, when = 0) {
+    if (muted || !ac) return;
+    const t = ac.currentTime + when;
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+    g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(ac.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function sfxScrape() {
+    if (muted || !ac) return;
+    const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain(), t = ac.currentTime;
+    s.buffer = noiseBuf; f.type = 'bandpass'; f.frequency.value = 2200 + Math.random() * 1500; f.Q.value = 1.2;
+    g.gain.setValueAtTime(0.09, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+    s.connect(f).connect(g).connect(ac.destination); s.start(t); s.stop(t + 0.08);
+  }
+  const sfxPop = () => tone(520, 0.09, 'triangle', 0.08, 1300);
+  const sfxBad = () => tone(150, 0.18, 'square', 0.05, 90);
+  const sfxHorn = () => { tone(233, 0.22, 'sawtooth', 0.035); tone(294, 0.22, 'sawtooth', 0.03); tone(233, 0.16, 'sawtooth', 0.035, null, 0.26); tone(294, 0.16, 'sawtooth', 0.03, null, 0.26); };
+  const sfxPing = () => { tone(880, 0.08, 'sine', 0.05); tone(1320, 0.12, 'sine', 0.05, null, 0.09); };
+
+  // ---------- world data ----------
+  const LINES = [
+    ['1104', 'ITAPUÃ'], ['0302', 'LAPA'], ['1620', 'CAJAZEIRAS'], ['0810', 'PITUBA'],
+    ['1240', 'SUSSUARANA'], ['0507', 'LIBERDADE'], ['1505', 'PARIPE'], ['0922', 'PERNAMBUÉS'],
+    ['1311', 'SÃO MARCOS'], ['0716', 'BARRA'], ['1418', 'VALÉRIA'], ['0604', 'RIBEIRA'],
+    ['1203', 'SAN MARTIN'], ['1025', 'STELLA MARIS'], ['0451', 'CALÇADA'], ['1712', 'MUSSURUNGA'],
+  ];
+  const DECOYS = [
+    { text: 'BORA BAHÊA', bg: '#1b4fa0', fg: '#ffffff', edge: '#d4251c', toast: 'Adesivo do Bahêa pode, viu?' },
+    { text: 'DEUS É FIEL', bg: '#ffffff', fg: '#1b3f8f', edge: '#1b3f8f', toast: 'Esse não ameaça a democracia.' },
+    { text: 'ACARAJÉ 10/10', bg: '#f5c518', fg: '#5a2a0a', edge: '#5a2a0a', toast: 'Propaganda de acarajé tá liberada.' },
+    { text: 'ME RESPEITE', bg: '#111111', fg: '#f5c518', edge: '#f5c518', toast: 'Esse aí é patrimônio baiano.' },
+  ];
+  const PARIS_BEFORE = [
+    'Bonjour! Tô em missão oficial. Qualquer coisa, manda áudio.',
+    'Que horas são aí? Aqui já tá na hora do almoço.',
+    'Aqui o ônibus passa a cada 4 minutos. Tô anotando tudo pra Salvador.',
+    'O wi-fi do hotel tá lento. Se eu sumir, foi isso.',
+    'Volto segunda. Segura as pontas aí.',
+    'Comi um croissant que você nem acredita.',
+  ];
+  const PARIS_AFTER = [
+    'Mandado de prisão?? Gente, tô no Louvre.',
+    'Avisa à PF que meu voo é só amanhã.',
+    'Calma. Até eu chegar, isso perde o objeto.',
+    'Vou botar o celular no modo avião. Por segurança.',
+  ];
+  const EVENTS = [
+    { at: 360, text: '06h · Garagem aberta. Tem adesivo no para-brisa.' },
+    { at: 570, text: '09h30 · Semob diz ter sido avisada da “adesivação”.' },
+    { at: 665, text: '11h05 · Pedido à Justiça: ônibus ainda na garagem.' },
+    { at: 740, text: '12h20 · Nova ordem: pode sair com adesivo mesmo!', unlock: true },
+    { at: 800, text: 'TRE-BA: frota toda na rua e multa de R$ 1 mi por hora.' },
+    { at: 860, text: 'TRE-BA manda a PF prender o secretário. Ele está em Paris.', arrest: true },
+  ];
+
+  // ---------- state ----------
+  let W = 0, H = 0, DPR = 1, G = null;
+  let mode = 'intro';
+  let elapsed = 0, score = 0, scraped = 0, passed = 0, forced = 0, voters = 300, decoyHits = 0, blocked = 0;
+  let bus = null, busCount = 0;
+  let particles = [], floaters = [];
+  let eventIdx = 0, unlocked = false, arrested = false;
+  let parisNext = 7, parisTimer = 0, parisIdx = 0, parisAfterIdx = 0;
+  let shake = 0, bannerTimer = 0, toastTimer = 0;
+  let stroke = null;
+
+  // ---------- layout ----------
+  // Bus seen from the front: width:height about 0.82.
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    DPR = Math.min(2, window.devicePixelRatio || 1);
+    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const floorY = H * 0.95;
+    const bh = Math.min(H * 0.8, (W * 0.9) / 0.82);
+    const bw = bh * 0.82;
+    const sr = Math.max(20, Math.min(32, bw * 0.075));
+    G = { bw, bh, bx: (W - bw) / 2, by: floorY - bh, floorY, sr };
+  }
+  new ResizeObserver(resize).observe(stage);
+  resize();
+
+  // Windshield box, relative to the bus front.
+  const WS = { x: 0.05, y: 0.15, w: 0.9, h: 0.42 };
+
+  // ---------- bus ----------
+  function newBus(demo = false) {
+    busCount++;
+    const [line, dest] = LINES[Math.floor(Math.random() * LINES.length)];
+    const plate = 'PK' + String.fromCharCode(65 + Math.floor(Math.random() * 26)) + Math.floor(1 + Math.random() * 9) + String.fromCharCode(65 + Math.floor(Math.random() * 26)) + Math.floor(10 + Math.random() * 89);
+    let sticker = null;
+    const roll = Math.random();
+    const kind = demo || busCount <= 2 ? '13' : roll < STICKERED_SHARE ? '13' : roll < 0.85 ? 'decoy' : 'none';
+    if (kind !== 'none') {
+      const { bw, bh, sr } = G;
+      const isDecoy = kind === 'decoy';
+      const rx = isDecoy ? sr * 1.45 : sr, ry = isDecoy ? sr * 0.6 : sr;
+      const x0 = WS.x * bw + rx + 6, x1 = (WS.x + WS.w) * bw - rx - 6;
+      const y0 = WS.y * bh + ry + 6, y1 = (WS.y + WS.h) * bh - ry - 10;
+      let x = 0, y = 0;
+      for (let i = 0; i < 40; i++) {
+        x = x0 + Math.random() * (x1 - x0); y = y0 + Math.random() * (y1 - y0);
+        if (Math.abs(x - bw / 2) > rx + 8) break;   // keep clear of the centre pillar
+      }
+      const hp = demo || busCount <= 2 ? 2 : 2 + Math.floor(Math.random() * 3);
+      sticker = isDecoy
+        ? { u: x / bw, v: y / bh, decoy: DECOYS[Math.floor(Math.random() * DECOYS.length)], rot: (Math.random() - 0.5) * 0.2 }
+        : { u: x / bw, v: y / bh, hp, maxHp: hp, rot: (Math.random() - 0.5) * 0.5 };
+    }
+    return { line, dest, plate, fleet: 20000 + Math.floor(Math.random() * 9000), sticker, phase: demo ? 'idle' : 'enter', t: 0, how: null };
+  }
+  const easeOut = (k) => 1 - Math.pow(1 - k, 3);
+  const easeIn = (k) => k * k * k;
+  function busRect(b = bus) {
+    const { bw, bh, bx, by } = G;
+    let s = 1, a = 1, x = bx;
+    if (b.phase === 'enter') { const k = easeOut(Math.min(1, b.t / ANIM)); s = 0.55 + 0.45 * k; a = k; }
+    if (b.phase === 'exit') { const k = easeIn(Math.min(1, b.t / ANIM)); x = bx + (W - bx + 30) * k; }
+    const w = bw * s, h = bh * s;
+    return { x: x + (bw - w) / 2, y: by + (bh - h), w, h, a };
+  }
+  const has13 = () => bus && bus.sticker && !bus.sticker.decoy;
+
+  function releaseBus(how) {
+    if (!bus || bus.phase !== 'idle') return;
+    bus.phase = 'exit'; bus.t = 0; bus.how = how;
+    if (how === 'scraped') scraped++;
+    else if (how === 'forced') forced++;
+    else passed++;
+    voters = Math.max(0, voters - BUS_CAPACITY);
+    sfxHorn();
+  }
+  function tryRelease() {
+    if (mode !== 'play' || !bus || bus.phase !== 'idle') return;
+    if (has13()) {
+      if (!unlocked) {
+        blocked++; sfxBad(); shake = 0.25;
+        toast('Com adesivo do 13 não sai. Raspa!');
+        return;
+      }
+      releaseBus('forced');
+      return;
+    }
+    releaseBus(bus.sticker ? 'decoy' : 'pass');
+  }
+
+  // ---------- input ----------
+  function pt(e) { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  function stickerPos() {
+    const r = busRect(), s = bus.sticker;
+    return { x: r.x + s.u * r.w, y: r.y + s.v * r.h };
+  }
+  function stickerAt(p) {
+    if (!bus || bus.phase !== 'idle' || !bus.sticker) return null;
+    const s = bus.sticker, c = stickerPos(), { sr } = G;
+    if (s.decoy) return Math.abs(p.x - c.x) < sr * 1.6 && Math.abs(p.y - c.y) < sr * 0.8 ? s : null;
+    return Math.hypot(p.x - c.x, p.y - c.y) < sr * 1.4 ? s : null;
+  }
+  function hit(s, p) {
+    if (s.decoy) {
+      if (stroke && stroke.decoy) return;
+      if (stroke) stroke.decoy = true;
+      score = Math.max(0, score - 1); decoyHits++;
+      shake = 0.25; sfxBad();
+      toast(s.decoy.toast + ' (−1)');
+      floaters.push({ x: p.x, y: p.y, text: '−1', life: 0.9, color: '#ff6b5e' });
+      return;
+    }
+    s.hp--; sfxScrape();
+    const c = stickerPos();
+    chips(c.x, c.y, 4, '#d4251c');
+    if (s.hp <= 0) {
+      bus.sticker = null;
+      score++; sfxPop();
+      chips(c.x, c.y, 12, '#d4251c'); chips(c.x, c.y, 5, '#ffffff');
+      floaters.push({ x: c.x, y: c.y - G.sr, text: '+1', life: 0.8, color: '#f5c518' });
+      setTimeout(() => releaseBus('scraped'), 140);
+    }
+  }
+  cv.addEventListener('pointerdown', (e) => {
+    if (mode !== 'play') return;
+    audio();
+    try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+    const p = pt(e);
+    stroke = { last: p, acc: 0, decoy: false };
+    const s = stickerAt(p);
+    if (s) hit(s, p);
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (!stroke || mode !== 'play') return;
+    const p = pt(e);
+    const d = Math.hypot(p.x - stroke.last.x, p.y - stroke.last.y);
+    stroke.last = p;
+    const s = stickerAt(p);
+    if (!s) return;
+    if (s.decoy) { hit(s, p); return; }
+    stroke.acc += d;
+    const step = G.sr * 1.1;
+    while (stroke.acc >= step && bus.sticker === s) { stroke.acc -= step; hit(s, p); }
+  });
+  const endStroke = () => { stroke = null; };
+  cv.addEventListener('pointerup', endStroke);
+  cv.addEventListener('pointercancel', endStroke);
+  releaseBtn.addEventListener('click', () => { audio(); tryRelease(); });
+  window.addEventListener('keydown', (e) => {
+    if ((e.code === 'Space' || e.code === 'Enter') && mode === 'play') { e.preventDefault(); tryRelease(); }
+  });
+  $('#parisClose').addEventListener('click', () => { parisTimer = 0; parisEl.hidden = true; });
+
+  // ---------- UI helpers ----------
+  function banner(text) { bannerEl.textContent = text; bannerEl.classList.add('show'); bannerTimer = 3.2; }
+  function toast(text) { toastEl.textContent = text; toastEl.classList.add('show'); toastTimer = 1.4; }
+  function chips(x, y, n, color) {
+    if (reduceMotion) n = Math.ceil(n / 3);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, v = 80 + Math.random() * 220;
+      particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 120, life: 0.6 + Math.random() * 0.4, color, s: 3 + Math.random() * 5, r: Math.random() * 6 });
+    }
+  }
+  function clockMinutes() { return 360 + Math.min(1, elapsed / GAME_SECONDS) * 660; }
+  function clockText(m) { const h = Math.floor(m / 60), mm = Math.floor(m % 60); return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`; }
+
+  // ---------- game flow ----------
+  function start() {
+    audio();
+    mode = 'play';
+    elapsed = 0; score = 0; scraped = 0; passed = 0; forced = 0; voters = 300; decoyHits = 0; blocked = 0;
+    particles = []; floaters = [];
+    eventIdx = 0; unlocked = false; arrested = false;
+    parisNext = 7; parisTimer = 0; parisIdx = 0; parisAfterIdx = 0; parisEl.hidden = true;
+    releaseNote.textContent = 'Só se não tiver adesivo do 13';
+    busCount = 0;
+    bus = newBus();
+    $('#intro').hidden = true; $('#end').hidden = true;
+  }
+  $('#startBtn').addEventListener('click', start);
+  $('#againBtn').addEventListener('click', start);
+
+  function update(dt) {
+    if (mode === 'play') {
+      elapsed += dt;
+      voters += (35 + elapsed * 1.6) * dt;
+      const m = clockMinutes();
+      while (eventIdx < EVENTS.length && m >= EVENTS[eventIdx].at) {
+        const ev = EVENTS[eventIdx++];
+        banner(ev.text); sfxPing();
+        if (ev.unlock) {
+          unlocked = true;
+          releaseNote.textContent = 'Desde 12h20 pode sair com adesivo';
+          releaseBtn.classList.remove('flash'); void releaseBtn.offsetWidth; releaseBtn.classList.add('flash');
+        }
+        if (ev.arrest) { arrested = true; parisNext = Math.min(parisNext, elapsed + 1.5); }
+      }
+      if (elapsed >= parisNext) {
+        parisMsg.textContent = arrested
+          ? PARIS_AFTER[parisAfterIdx++ % PARIS_AFTER.length]
+          : PARIS_BEFORE[parisIdx++ % PARIS_BEFORE.length];
+        parisEl.hidden = false; parisEl.style.animation = 'none'; void parisEl.offsetWidth; parisEl.style.animation = '';
+        parisTimer = 4.2; sfxPing();
+        parisNext = elapsed + (arrested ? 6 + Math.random() * 3 : 9 + Math.random() * 4);
+      }
+      if (elapsed >= GAME_SECONDS) finish();
+    }
+    if (parisTimer > 0) { parisTimer -= dt; if (parisTimer <= 0) parisEl.hidden = true; }
+    if (bannerTimer > 0) { bannerTimer -= dt; if (bannerTimer <= 0) bannerEl.classList.remove('show'); }
+    if (toastTimer > 0) { toastTimer -= dt; if (toastTimer <= 0) toastEl.classList.remove('show'); }
+    if (shake > 0) shake = Math.max(0, shake - dt);
+
+    if (bus) {
+      bus.t += dt;
+      if (bus.phase === 'enter' && bus.t >= ANIM) { bus.phase = 'idle'; bus.t = 0; }
+      if (bus.phase === 'exit' && bus.t >= ANIM) { bus = mode === 'play' ? newBus() : null; }
+    }
+    for (const p of particles) { p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 700 * dt; p.r += dt * 8; }
+    particles = particles.filter((p) => p.life > 0);
+    for (const f of floaters) { f.life -= dt; f.y -= 50 * dt; }
+    floaters = floaters.filter((f) => f.life > 0);
+
+    hClock.textContent = clockText(mode === 'intro' ? 360 : clockMinutes());
+    hScore.textContent = String(score);
+    hBuses.textContent = String(scraped + passed + forced);
+    hVoters.textContent = fmt(voters);
+  }
+
+  // ---------- drawing ----------
+  function rr(x, y, w, h, r) { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); }
+  function star(cx, cy, R, r) {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5, rad = i % 2 ? r : R;
+      ctx.lineTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
+    }
+    ctx.closePath();
+  }
+  function drawGarage() {
+    const { floorY } = G;
+    const wg = ctx.createLinearGradient(0, 0, 0, floorY);
+    wg.addColorStop(0, '#1d2223'); wg.addColorStop(1, '#2c3233');
+    ctx.fillStyle = wg; ctx.fillRect(0, 0, W, floorY);
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += 64) { ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, floorY); ctx.stroke(); }
+    const n = Math.max(2, Math.floor(W / 260));
+    for (let i = 0; i < n; i++) {
+      const cx = (W / n) * (i + 0.5);
+      const glow = ctx.createRadialGradient(cx, 14, 4, cx, 14, 140);
+      glow.addColorStop(0, 'rgba(220,255,250,0.18)'); glow.addColorStop(1, 'rgba(220,255,250,0)');
+      ctx.fillStyle = glow; ctx.fillRect(cx - 140, 0, 280, 160);
+      ctx.fillStyle = '#e8fffb'; rr(cx - 50, 10, 100, 6, 3); ctx.fill();
+    }
+    // queue of buses waiting behind, when there is room for it
+    const qw = G.bw * 0.5;
+    if (W - G.bw > qw * 1.1) {
+      const qh = qw / 0.82;
+      const ghost = { line: '----', dest: 'NA FILA', plate: '', fleet: '', sticker: null };
+      ctx.globalAlpha = 0.28;
+      drawBusFront({ x: G.bx - qw * 0.75, y: G.floorY - qh, w: qw, h: qh }, ghost);
+      drawBusFront({ x: G.bx + G.bw - qw * 0.25, y: G.floorY - qh, w: qw, h: qh }, ghost);
+      ctx.globalAlpha = 1;
+    }
+    // exit door with daylight and the crowd at the stop
+    const dw = Math.max(70, W * 0.13), dx = W - dw - 10, dy = floorY - Math.min(H * 0.55, 240);
+    const sky = ctx.createLinearGradient(0, dy, 0, floorY);
+    sky.addColorStop(0, '#7fcdf5'); sky.addColorStop(1, '#ffe39a');
+    ctx.fillStyle = sky; ctx.fillRect(dx, dy, dw, floorY - dy);
+    ctx.fillStyle = '#16191a'; ctx.fillRect(dx - 6, dy - 6, dw + 12, 6);
+    ctx.fillRect(dx - 6, dy, 6, floorY - dy); ctx.fillRect(dx + dw, dy, 6, floorY - dy);
+    ctx.fillStyle = '#3fbf6a'; ctx.font = `400 ${Math.max(11, dw * 0.15)}px Bungee, sans-serif`;
+    ctx.textAlign = 'center'; ctx.fillText('SAÍDA', dx + dw / 2, dy - 12);
+    ctx.fillStyle = '#4a4f50'; ctx.fillRect(dx + dw * 0.82, floorY - 70, 3, 70);
+    ctx.fillStyle = '#f5c518'; rr(dx + dw * 0.82 - 9, floorY - 84, 21, 16, 3); ctx.fill();
+    const people = Math.min(70, Math.round(voters / 70));
+    const skin = ['#3b2a20', '#5a3a28', '#7a4a2e', '#2d1f18', '#8a5a3a'];
+    const shirts = ['#d4251c', '#f5c518', '#1b4fa0', '#ffffff', '#0e7a80', '#ff7a2f', '#7c3aed'];
+    for (let i = 0; i < people; i++) {
+      const row = Math.floor(i / 9), col = i % 9;
+      const px = dx + 6 + ((col * 37 + row * 13) % Math.max(10, dw - 12));
+      const py = floorY - 2 - row * 7;
+      const h = 22 + ((i * 7) % 9);
+      ctx.fillStyle = shirts[i % shirts.length]; rr(px - 5, py - h + 9, 10, h - 9, 4); ctx.fill();
+      ctx.fillStyle = skin[i % skin.length]; ctx.beginPath(); ctx.arc(px, py - h + 5, 5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.textAlign = 'left';
+    const fs = Math.max(14, Math.min(34, W * 0.04));
+    ctx.font = `400 ${fs}px Bungee, sans-serif`;
+    ctx.fillStyle = '#f5c518';
+    ctx.fillText('GARAGEM 5', 16, 30 + fs);
+    ctx.font = `400 ${fs * 0.48}px Bungee, sans-serif`;
+    ctx.fillStyle = 'rgba(243,241,234,0.7)';
+    ctx.fillText('CAMINHO DE AREIA · COM ADESIVO NÃO SAI', 16, 30 + fs + fs * 0.75, W - 32);
+    const fg = ctx.createLinearGradient(0, floorY, 0, H);
+    fg.addColorStop(0, '#2a2e2f'); fg.addColorStop(1, '#141617');
+    ctx.fillStyle = fg; ctx.fillRect(0, floorY, W, H - floorY);
+    const sh = 6;
+    for (let x = -20; x < W + 20; x += 24) {
+      ctx.fillStyle = '#f5c518'; ctx.beginPath();
+      ctx.moveTo(x, floorY); ctx.lineTo(x + 12, floorY); ctx.lineTo(x + 12 + sh, floorY + sh); ctx.lineTo(x + sh, floorY + sh); ctx.fill();
+    }
+  }
+
+  function drawBusFront(r, b) {
+    const { x, y, w, h } = r;
+    // mirrors
+    ctx.strokeStyle = '#2a2f30'; ctx.lineWidth = Math.max(2, w * 0.014);
+    ctx.beginPath(); ctx.moveTo(x + w * 0.03, y + h * 0.17); ctx.lineTo(x - w * 0.07, y + h * 0.2); ctx.lineTo(x - w * 0.07, y + h * 0.28); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + w * 0.97, y + h * 0.17); ctx.lineTo(x + w * 1.07, y + h * 0.2); ctx.lineTo(x + w * 1.07, y + h * 0.28); ctx.stroke();
+    ctx.fillStyle = '#2a2f30';
+    rr(x - w * 0.1, y + h * 0.26, w * 0.06, h * 0.13, 4); ctx.fill();
+    rr(x + w * 1.04, y + h * 0.26, w * 0.06, h * 0.13, 4); ctx.fill();
+    // wheels peeking under the bumper
+    ctx.fillStyle = '#121414';
+    rr(x + w * 0.06, y + h * 0.9, w * 0.15, h * 0.1, 4); ctx.fill();
+    rr(x + w * 0.79, y + h * 0.9, w * 0.15, h * 0.1, 4); ctx.fill();
+    // body
+    ctx.fillStyle = '#f2f4ef'; rr(x, y, w, h * 0.94, [w * 0.09, w * 0.09, w * 0.03, w * 0.03]); ctx.fill();
+    // LED destination sign
+    const lx = x + w * 0.08, ly = y + h * 0.035, lw = w * 0.84, lh = h * 0.085;
+    ctx.fillStyle = '#0b0d0d'; rr(lx, ly, lw, lh, 4); ctx.fill();
+    ctx.fillStyle = '#ffae1a'; ctx.font = `400 ${lh * 0.95}px VT323, monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(`${b.line}  ${b.dest}`, lx + lw / 2, ly + lh / 2 + 1, lw - 12);
+    ctx.textBaseline = 'alphabetic';
+    // windshield
+    const wx = x + WS.x * w, wy = y + WS.y * h, ww = WS.w * w, wh = WS.h * h;
+    const glass = ctx.createLinearGradient(wx, wy, wx + ww, wy + wh);
+    glass.addColorStop(0, '#2b4650'); glass.addColorStop(1, '#16262c');
+    ctx.fillStyle = glass; rr(wx, wy, ww, wh, w * 0.03); ctx.fill();
+    // driver, steering wheel, reflections
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.arc(wx + ww * 0.27, wy + wh * 0.5, ww * 0.055, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(wx + ww * 0.27, wy + wh * 0.86, ww * 0.12, wh * 0.2, 0, Math.PI, 0); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = Math.max(2, w * 0.012);
+    ctx.beginPath(); ctx.ellipse(wx + ww * 0.27, wy + wh * 0.92, ww * 0.09, wh * 0.06, 0, Math.PI, 0); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.beginPath(); ctx.moveTo(wx + ww * 0.55, wy); ctx.lineTo(wx + ww * 0.72, wy); ctx.lineTo(wx + ww * 0.6, wy + wh); ctx.lineTo(wx + ww * 0.43, wy + wh); ctx.fill();
+    ctx.fillStyle = '#d9dcd6'; ctx.fillRect(x + w * 0.495, wy, w * 0.01, wh);
+    // wipers
+    ctx.strokeStyle = '#111414'; ctx.lineWidth = Math.max(2, w * 0.01); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(wx + ww * 0.1, wy + wh * 0.97); ctx.lineTo(wx + ww * 0.4, wy + wh * 0.78); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(wx + ww * 0.58, wy + wh * 0.97); ctx.lineTo(wx + ww * 0.88, wy + wh * 0.78); ctx.stroke();
+    ctx.lineCap = 'butt';
+    // livery
+    ctx.fillStyle = '#f5c518'; ctx.fillRect(x, y + h * 0.6, w, h * 0.022);
+    ctx.fillStyle = '#0e7a80'; ctx.fillRect(x, y + h * 0.622, w, h * 0.19);
+    if (b.fleet) {
+      ctx.fillStyle = '#ffffff'; ctx.font = `600 ${Math.max(9, h * 0.035)}px Archivo, sans-serif`; ctx.textAlign = 'center';
+      ctx.fillText(`Nº ${b.fleet}`, x + w / 2, y + h * 0.665);
+    }
+    // headlights + grille
+    ctx.fillStyle = '#fff3c4';
+    rr(x + w * 0.06, y + h * 0.7, w * 0.18, h * 0.065, 6); ctx.fill();
+    rr(x + w * 0.76, y + h * 0.7, w * 0.18, h * 0.065, 6); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    for (let i = 0; i < 4; i++) ctx.fillRect(x + w * 0.3, y + h * (0.695 + i * 0.022), w * 0.4, h * 0.01);
+    // bumper + plate
+    ctx.fillStyle = '#2a2f30'; rr(x + w * 0.02, y + h * 0.82, w * 0.96, h * 0.1, 6); ctx.fill();
+    if (b.plate) {
+      const pw = w * 0.24, ph = h * 0.055, px = x + w / 2 - pw / 2, py = y + h * 0.842;
+      ctx.fillStyle = '#ffffff'; rr(px, py, pw, ph, 3); ctx.fill();
+      ctx.fillStyle = '#1f3fa0'; ctx.fillRect(px, py, pw, ph * 0.25);
+      ctx.fillStyle = '#111'; ctx.font = `600 ${ph * 0.6}px Archivo, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(b.plate, px + pw / 2, py + ph * 0.62, pw - 6); ctx.textBaseline = 'alphabetic';
+    }
+    if (b.sticker) drawSticker(b.sticker, x + b.sticker.u * w, y + b.sticker.v * h, w / G.bw);
+  }
+
+  function drawSticker(s, cx, cy, scale) {
+    const r = G.sr * scale;
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(s.rot);
+    if (s.decoy) {
+      const d = s.decoy, w = r * 2.9, h = r * 1.2;
+      ctx.fillStyle = d.bg; rr(-w / 2, -h / 2, w, h, 5); ctx.fill();
+      ctx.strokeStyle = d.edge; ctx.lineWidth = 2; rr(-w / 2 + 3, -h / 2 + 3, w - 6, h - 6, 3); ctx.stroke();
+      ctx.fillStyle = d.fg; ctx.font = `400 ${h * 0.36}px Bungee, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(d.text, 0, 1, w - 12); ctx.textBaseline = 'alphabetic';
+      ctx.restore(); return;
+    }
+    const dmg = 1 - s.hp / s.maxHp;
+    ctx.scale(1 - dmg * 0.15, 1 - dmg * 0.15);
+    ctx.fillStyle = '#d4251c'; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(2, r * 0.09); ctx.beginPath(); ctx.arc(0, 0, r * 0.86, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#ffffff'; star(0, r * 0.02, r * 0.68, r * 0.29); ctx.fill();
+    ctx.fillStyle = '#d4251c'; ctx.font = `400 ${r * 0.48}px Bungee, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('13', 0, r * 0.1); ctx.textBaseline = 'alphabetic';
+    if (dmg > 0) {
+      ctx.fillStyle = '#2b4650';
+      ctx.beginPath(); ctx.moveTo(r * 0.2, r); ctx.lineTo(r, r * 0.2); ctx.lineTo(r * 1.1, r * 1.1); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#f6c1bd';
+      ctx.beginPath(); ctx.moveTo(r * 0.2, r * 0.95); ctx.lineTo(r * 0.95, r * 0.2); ctx.lineTo(r * 0.35, r * 0.35); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 2;
+      const lines = Math.round(dmg * 6);
+      for (let i = 0; i < lines; i++) {
+        const o = (i - lines / 2) * r * 0.22;
+        ctx.beginPath(); ctx.moveTo(-r * 0.8, o - r * 0.3); ctx.lineTo(r * 0.6, o + r * 0.3); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawBus() {
+    const r = busRect();
+    if (shake > 0 && !reduceMotion) r.x += (Math.random() - 0.5) * 30 * shake;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(r.x + r.w / 2, G.floorY, r.w * 0.55, r.h * 0.03, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = r.a;
+    drawBusFront(r, bus);
+    ctx.globalAlpha = 1;
+    if (bus.phase === 'exit') {
+      const labels = { scraped: ['LIBERADO', '#1f9d55'], pass: ['LIBERADO', '#1f9d55'], decoy: ['LIBERADO', '#1f9d55'], forced: ['SAIU ADESIVADO', '#d4251c'] };
+      const [label, color] = labels[bus.how] || labels.pass;
+      ctx.save(); ctx.translate(r.x + r.w / 2, r.y + r.h * 0.36); ctx.rotate(-0.12);
+      ctx.font = `400 ${r.w * 0.09}px Bungee, sans-serif`; ctx.textAlign = 'center';
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(255,255,255,0.9)'; rr(-tw / 2 - 12, -r.w * 0.085, tw + 24, r.w * 0.12, 6); ctx.fill();
+      ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.stroke();
+      ctx.fillStyle = color; ctx.fillText(label, 0, r.w * 0.008);
+      ctx.restore();
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawGarage();
+    if (bus) drawBus();
+    for (const p of particles) {
+      ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 1.6));
+      ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.color; ctx.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * 0.6); ctx.restore();
+    }
+    for (const f of floaters) {
+      ctx.globalAlpha = Math.max(0, Math.min(1, f.life * 1.5));
+      ctx.fillStyle = f.color; ctx.font = `400 ${G.sr * 0.9}px Bungee, sans-serif`; ctx.textAlign = 'center';
+      ctx.fillText(f.text, f.x, f.y); ctx.globalAlpha = 1;
+    }
+    if (mode === 'play') {
+      const k = Math.min(1, elapsed / GAME_SECONDS);
+      ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(0, H - 5, W, 5);
+      ctx.fillStyle = k > 0.85 ? '#d4251c' : '#f5c518'; ctx.fillRect(0, H - 5, W * (1 - k), 5);
+    }
+  }
+
+  // ---------- results ----------
+  const RANKS = [
+    [0, 'Estagiário em Paris'],
+    [5, 'Raspador de Domingo'],
+    [11, 'Espátula da Semob'],
+    [18, 'Terror da Cola'],
+    [26, 'Mais rápido que a Prefeitura'],
+  ];
+  function rankFor(n) { let t = RANKS[0][1]; for (const [min, name] of RANKS) if (n >= min) t = name; return t; }
+  // One sticker per bus: at the player's pace, how long would the 75 retained buses take?
+  function minutesFor75() { return score > 0 ? (RETIDOS * GAME_SECONDS) / score / 60 : null; }
+
+  function shareText() {
+    const total = scraped + passed + forced;
+    const m = minutesFor75();
+    const pace = m !== null
+      ? `No meu ritmo, os ${RETIDOS} ônibus retidos em Salvador estariam na rua em ${fmt1(m)} minutos. A prefeitura levou umas 3 horas.`
+      : `Não raspei nenhum. Igualzinho à manhã de domingo.`;
+    return `🚌 Raspei ${pl(score, 'adesivo', 'adesivos')} (um por para-brisa) e botei ${pl(total, 'buzu', 'buzus')} na rua em 60 segundos no Raspa Buzu. ${pace} Duvido você raspar mais. ${SHARE_URL}`.trim();
+  }
+
+  function finish() {
+    mode = 'end';
+    parisEl.hidden = true; parisTimer = 0;
+    releaseNote.textContent = 'Urnas fechadas';
+    bus = null;
+    const best = parseInt(store.get(BEST_KEY) || '0', 10);
+    if (score > best) store.set(BEST_KEY, String(score));
+    showBest();
+
+    const total = scraped + passed + forced;
+    const m = minutesFor75();
+    $('#eScore').textContent = String(score);
+    $('#eRank').textContent = rankFor(score);
+    $('#eUnit').textContent = `${score === 1 ? 'adesivo raspado' : 'adesivos raspados'} em 60 segundos, um por para-brisa`;
+    let v = `Você botou <b>${pl(total, 'buzu', 'buzus')}</b> na rua: ${pl(scraped, 'raspado', 'raspados')}, ${passed} que nem ${passed === 1 ? 'tinha' : 'tinham'} adesivo do 13`;
+    v += forced ? ` e ${pl(forced, 'adesivado', 'adesivados')} mesmo.` : '.';
+    if (m !== null) v += ` Um adesivinho por para-brisa: no seu ritmo, sozinho, os <b>${RETIDOS} ônibus retidos</b> estariam na rua em <b>${fmt1(m)} minutos</b>.`;
+    else v += ` Nenhum adesivo raspado. Você igualou a manhã de domingo em Salvador.`;
+    if (blocked > 0) v += ` Você tentou liberar ${blocked} ônibus adesivado${blocked > 1 ? 's' : ''} antes da ordem das 12h20.`;
+    if (decoyHits > 0) v += ` E raspou ${decoyHits} adesivo${decoyHits > 1 ? 's' : ''} que podia ficar.`;
+    $('#eVerdict').innerHTML = v;
+    $('#eFacts').innerHTML = `<b>${fmt(voters)}</b> pessoas ficaram no ponto (na conta do jogo). Na vida real, a Semob diz ter sido avisada às 9h30, e a frota só normalizou por volta de 12h20. O secretário estava em Paris, o mandado de prisão foi revogado e o caso segue sob apuração.`;
+
+    const text = shareText();
+    $('#shareText').value = text;
+    $('#shareWa').href = 'https://wa.me/?text=' + encodeURIComponent(text);
+    $('#shareX').href = 'https://x.com/intent/post?text=' + encodeURIComponent(text);
+    try { $('#eCard').src = renderCard(total, m); } catch (e) { $('#eCard').hidden = true; }
+
+    setTimeout(() => { $('#end').hidden = false; $('#end').scrollTop = 0; }, 500);
+  }
+
+  function renderCard(total, m) {
+    const c = document.createElement('canvas'); c.width = 1080; c.height = 1350;
+    const x = c.getContext('2d');
+    x.fillStyle = '#16191a'; x.fillRect(0, 0, 1080, 1350);
+    for (let i = -40; i < 1120; i += 56) {
+      x.fillStyle = '#f5c518'; x.beginPath(); x.moveTo(i, 0); x.lineTo(i + 28, 0); x.lineTo(i + 28 - 40, 40); x.lineTo(i - 40, 40); x.fill();
+      x.beginPath(); x.moveTo(i, 1310); x.lineTo(i + 28, 1310); x.lineTo(i + 28 - 40, 1350); x.lineTo(i - 40, 1350); x.fill();
+    }
+    x.textAlign = 'left';
+    x.fillStyle = '#ffae1a'; x.font = '400 46px VT323, monospace'; x.fillText('SALVADOR · 25/10 · 2º TURNO', 80, 130);
+    x.fillStyle = '#f5c518'; x.font = '400 120px Bungee, sans-serif'; x.fillText('RASPA', 80, 260);
+    x.fillStyle = '#f3f1ea'; x.fillText('BUZU', 80, 380);
+    x.save(); x.translate(860, 300); x.rotate(-0.2);
+    x.fillStyle = '#d4251c'; x.beginPath(); x.arc(0, 0, 120, 0, Math.PI * 2); x.fill();
+    x.strokeStyle = '#fff'; x.lineWidth = 10; x.beginPath(); x.arc(0, 0, 103, 0, Math.PI * 2); x.stroke();
+    x.fillStyle = '#fff'; x.beginPath();
+    for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + (i * Math.PI) / 5, rad = i % 2 ? 35 : 82; x.lineTo(Math.cos(a) * rad, Math.sin(a) * rad); }
+    x.closePath(); x.fill();
+    x.fillStyle = '#d4251c'; x.font = '400 56px Bungee, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('13', 0, 12);
+    x.strokeStyle = '#f3f1ea'; x.lineWidth = 8; x.beginPath(); x.moveTo(-150, -40); x.lineTo(150, 40); x.stroke();
+    x.restore();
+    x.textBaseline = 'alphabetic'; x.textAlign = 'left';
+    x.fillStyle = '#f5c518'; x.font = '400 300px Bungee, sans-serif'; x.fillText(String(score), 70, 730);
+    x.fillStyle = '#f3f1ea'; x.font = '800 50px Archivo, sans-serif'; x.fillText('adesivos raspados em 60s', 80, 805, 920);
+    x.fillStyle = '#9ba5a4'; x.font = '400 40px Archivo, sans-serif'; x.fillText('um por para-brisa', 80, 855);
+    const rank = rankFor(score).toUpperCase();
+    x.font = '400 52px Bungee, sans-serif';
+    x.fillStyle = '#f3f1ea'; x.fillRect(80, 890, Math.min(920, x.measureText(rank).width + 40), 80);
+    x.fillStyle = '#16191a'; x.fillText(rank, 100, 948, 880);
+    x.fillStyle = '#f3f1ea'; x.font = '400 46px Archivo, sans-serif';
+    x.fillText(`${total} buzus na rua · ${fmt(voters)} pessoas no ponto`, 80, 1050, 920);
+    x.fillStyle = '#ffae1a'; x.font = '400 54px VT323, monospace';
+    x.fillText(m !== null ? `No meu ritmo: 75 ônibus em ${fmt1(m)} min.` : 'Nenhum adesivo raspado. Igual a domingo.', 80, 1135, 920);
+    x.fillText('A prefeitura: das 9h30 às 12h20.', 80, 1195, 920);
+    x.fillStyle = '#9ba5a4'; x.font = '400 32px Archivo, sans-serif'; x.fillText('Sátira · e você, raspa quantos?', 80, 1268);
+    return c.toDataURL('image/png');
+  }
+
+  // ---------- sharing ----------
+  async function copyText() {
+    const ta = $('#shareText'), text = ta.value;
+    try { await navigator.clipboard.writeText(text); flashCopy('Texto copiado. Cola no zap!'); }
+    catch (e) { ta.focus(); ta.select(); flashCopy('Texto selecionado. Copie com Ctrl+C ou segurando o dedo.'); }
+  }
+  function flashCopy(t) { const b = $('#shareCopy'); b.textContent = t; setTimeout(() => { b.textContent = 'Copiar texto'; }, 2400); }
+  $('#shareCopy').addEventListener('click', copyText);
+  $('#shareNative').addEventListener('click', async () => {
+    const text = $('#shareText').value;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Raspa Buzu', text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    copyText();
+  });
+
+  // ---------- boot ----------
+  bus = newBus(true);
+  let last = 0;
+  function frame(ts) {
+    const dt = Math.min(0.05, last ? (ts - last) / 1000 : 0); last = ts;
+    update(dt); draw();
+    requestAnimationFrame(frame);
+  }
+  (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(() => requestAnimationFrame(frame));
+  document.addEventListener('visibilitychange', () => { last = 0; });
+})();
+</script>

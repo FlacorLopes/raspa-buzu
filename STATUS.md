@@ -46,7 +46,7 @@ Ajudas de teste na URL:
 - **Secretário em Paris**: 14 mensagens antes do mandado e 6 depois (`src/content.ts`), sorteadas sem repetir.
 - **Eventos do relógio** com fatos: frota prometida, carona solidária, Semob culpa o adesivo, "frota igual ao 1º turno", 11h05 pedido à Justiça, Procon 944 parados, 12h20 "normalizou", Bruno Reis, TRE multa, mandado de prisão, 15h30 Rui Costa.
 - **Fim**: tela com o resumo no texto do usuário ("Nível de baratino…"), vídeo (canvas + áudio do jogo, mp4 quando o navegador suporta) e **imagem do placar sem câmera** (1080×1920), cada um com botão de compartilhar e de baixar.
-- **Música**: "Bloquinho Hitmado" (EMBeat) toca uma vez a partir do início da gravação, ganho 0,33. Licença: uso não monetizado com crédito obrigatório. O crédito está no cartão final, na mensagem de compartilhar e em "fatos e fontes".
+- **Música**: "Bloquinho Hitmado" (EMBeat) toca uma vez a partir do início da gravação, ganho 0,33. Licença: uso não monetizado com crédito obrigatório. O crédito está no cartão final (vídeo e imagem) e em "fatos e fontes"; o texto de compartilhar é curto (cabe num tweet) e não repete o crédito.
 
 ## Desempenho (aprendizados no Galaxy A17)
 

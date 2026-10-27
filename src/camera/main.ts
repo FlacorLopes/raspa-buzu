@@ -6,8 +6,8 @@ import {
   busSpec, randomSeed, type BusSpec, type RunEvent,
 } from '../sim.ts';
 import {
-  ACCESS_TOAST, CLEAN_BUS_TOASTS, DECOYS, EVENTS, MUSIC_CREDIT_SHARE, MUSIC_CREDIT_SHORT, PARIS_AFTER, PARIS_BEFORE,
-  baratinoLevel, clockMinutes, clockText, rankFor,
+  ACCESS_TOAST, CLEAN_BUS_TOASTS, DECOYS, EVENTS, MUSIC_CREDIT_SHORT, PARIS_AFTER, PARIS_BEFORE,
+  baratinoLevel, clockMinutes, clockText, rankFor, shareCaption,
 } from '../content.ts';
 import { HandTracker, OneEuro, isThumbUp, type Pt } from './hands.ts';
 import { ThumbGate } from './thumb-gate.ts';
@@ -674,12 +674,7 @@ async function finish() {
 }
 
 function shareText() {
-  const m = paceMinutes();
-  const rip = ripAvgSec();
-  const ripText = rip !== null ? ` Tirar o adesivo levou ${fmt1(rip)} s.` : '';
-  const pace = m !== null ? ` No meu ritmo, os ${RETIDOS} ônibus retidos em Salvador estariam na rua em ${fmt1(m)} minutos.` : '';
-  const clean = passed > 0 ? ` ${buses(passed)} nem tinham adesivo: baratinômetro no ${baratinoLevel(passed)}.` : '';
-  return `🚌 Botei ${buses(score)} na rua em 1 minuto no Raspa Buzu.${clean}${ripText}${pace} O Procon contou 944 ônibus parados. Duvido você. ${SHARE_URL}\n${MUSIC_CREDIT_SHARE}`;
+  return shareCaption({ score, passed, paceMin: paceMinutes(), retidos: RETIDOS, url: SHARE_URL });
 }
 
 $<HTMLButtonElement>('#eShare').addEventListener('click', async () => {

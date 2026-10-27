@@ -68,7 +68,20 @@ export function baratinoLevel(cleanBuses: number) {
 
 /** Background beat and its required credit (free for non-monetised use, credit mandatory). */
 export const MUSIC_CREDIT_SHORT = 'Beat: Bloquinho Hitmado · EMBeat';
-export const MUSIC_CREDIT_SHARE = '🎹 Beat: Bloquinho Hitmado – EMBeat (@esdrassmiranda_)';
+
+/**
+ * Caption for the share sheet. Short enough for a tweet (280, links count 23) and for the part of a
+ * reel caption Instagram shows before "mais": the score line comes first, then one punchline.
+ * No music credit here: it is on the video's end card.
+ */
+export function shareCaption(o: { score: number; passed: number; paceMin: number | null; retidos: number; url: string }) {
+  const fmt = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+  const lines = [`🚌 Botei ${o.score} ônibus na rua em 1 minuto no Raspa Buzu.`];
+  if (o.paceMin !== null) lines.push(`No meu ritmo, os ${o.retidos} retidos saíam em ${fmt(o.paceMin)} min.`);
+  else if (o.passed > 0) lines.push(`${o.passed} nem tinham adesivo.`);
+  lines.push(`Desafio você 👉 ${o.url}`);
+  return lines.join('\n');
+}
 
 export interface ClockEvent { at: number; text: string; unlock?: boolean; arrest?: boolean }
 

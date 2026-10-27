@@ -5,7 +5,7 @@ import {
   AUTO_RELEASE_MS, BUS_CAPACITY, ENTER_MS, EV, EXIT_MS, GAME_MS, MIN_SCRAPE_GAP_MS, RETIDOS,
   UNLOCK_MS, busSpec, randomSeed, type BusSpec, type RunEvent,
 } from '../sim.ts';
-import { ACCESS_TOAST, DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, clockMinutes, clockText, rankFor } from '../content.ts';
+import { ACCESS_TOAST, CLEAN_BUS_TOASTS, DECOYS, EVENTS, PARIS_AFTER, PARIS_BEFORE, clockMinutes, clockText, rankFor } from '../content.ts';
 import { HandTracker, OneEuro, isThumbUp, type Pt } from './hands.ts';
 import { ThumbGate } from './thumb-gate.ts';
 import { Sfx } from './audio.ts';
@@ -69,7 +69,8 @@ function resetRun() {
   ripMs = [];
   voters = 300; eventIdx = 0; unlocked = false; arrested = false;
   lastScrapeT = -Infinity; penaltyCooldown = 0;
-  paris = { text: '', until: 0, next: 7000, i: 0, j: 0 };
+  paris = { text: '', until: 0, next: PARIS_FIRST_MS, before: shuffle(PARIS_BEFORE), after: shuffle(PARIS_AFTER) };
+  barataFlash = 0;
   banner = { text: '', until: 0 };
   bus = newBus(0, 0);
 }
@@ -182,6 +183,7 @@ function scrapeAlong(a: Pt & { t: number }, b: Pt & { t: number }) {
   if (bus.hp === 0) {
     scraped++;
     ripMs.push(t - bus.firstScrapeAt);
+    toast(`Adesivo fora em ${fmt1(Math.max(0.1, ripMs[ripMs.length - 1] / 1000))} s. A Semob levou das 9h30 às 12h20.`);
     sfx?.pop();
     chips(c.x, c.y, 16, '#d4251c'); chips(c.x, c.y, 6, '#ffffff');
     floaters.push({ x: c.x, y: c.y - sr, text: '+1', life: 0.9, color: '#f5c518' });
@@ -204,7 +206,11 @@ function tryRelease() {
     if (t < UNLOCK_MS) { blocked++; sfx?.bad(); toast('Regra da Semob: com adesivo do 13 não sai. Raspa!'); return; }
     forced++; leave(t, 'forced'); return;
   }
-  passed++; leave(t, 'pass');
+  // A bus with no 13 sticker: it could have left all along. Feeds the baratinômetro.
+  passed++;
+  barataFlash = performance.now() + 700;
+  toast(CLEAN_BUS_TOASTS[(passed - 1) % CLEAN_BUS_TOASTS.length]);
+  leave(t, 'pass');
 }
 
 function leave(at: number, how: string) {
@@ -220,7 +226,16 @@ let particles: Particle[] = [];
 let floaters: { x: number; y: number; text: string; life: number; color: string }[] = [];
 let toastMsg = { text: '', until: 0 };
 let banner = { text: '', until: 0 };
-let paris = { text: '', until: 0, next: 7000, i: 0, j: 0 };
+// The absent secretary texts often: every 4.5-6.5 s, and every 3-4.5 s once the arrest warrant is out.
+const PARIS_FIRST_MS = 4000;
+const PARIS_SHOW_MS = 3200;
+let paris = { text: '', until: 0, next: PARIS_FIRST_MS, before: [] as string[], after: [] as string[] };
+let barataFlash = 0;
+function shuffle<T>(arr: readonly T[]) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
 
 function chips(x: number, y: number, n: number, color: string) {
   for (let i = 0; i < n; i++) {
@@ -254,9 +269,11 @@ function update(dt: number, now: number) {
       if (ev.arrest) { arrested = true; paris.next = Math.min(paris.next, elapsed + 1500); }
     }
     if (elapsed >= paris.next) {
-      paris.text = arrested ? PARIS_AFTER[paris.j++ % PARIS_AFTER.length] : PARIS_BEFORE[paris.i++ % PARIS_BEFORE.length];
-      paris.until = now + 4200; sfx?.ping();
-      paris.next = elapsed + (arrested ? 6000 + Math.random() * 3000 : 9000 + Math.random() * 4000);
+      const pool = arrested ? paris.after : paris.before;
+      if (!pool.length) pool.push(...shuffle(arrested ? PARIS_AFTER : PARIS_BEFORE));
+      paris.text = pool.shift()!;
+      paris.until = now + PARIS_SHOW_MS; sfx?.ping();
+      paris.next = elapsed + (arrested ? 3000 + Math.random() * 1500 : 4500 + Math.random() * 2000);
     }
     if (bus.releaseAt !== null && elapsed >= bus.releaseAt + EXIT_MS) {
       bus = newBus(bus.spec.index + 1, bus.releaseAt + EXIT_MS);
@@ -383,13 +400,22 @@ function drawHud() {
     ['RELÓGIO', clockText(clockMinutes(elapsed, GAME_MS))],
     ['NA RUA', String(score)],
     ['NO PONTO', Math.round(voters).toLocaleString('pt-BR')],
-    ['ADESIVOS', String(scraped)],
+    ['BARATINÔMETRO', String(passed)],
   ];
+  const lit = performance.now() < barataFlash;
   cols.forEach(([label, value], i) => {
     const x = 24 + i * 176;
-    ctx.fillStyle = '#9ba5a4'; ctx.font = '700 20px Archivo, sans-serif'; ctx.textAlign = 'left'; ctx.fillText(label, x, 40);
-    ctx.fillStyle = i === 2 ? '#f3f1ea' : '#ffae1a'; ctx.font = '400 58px VT323, monospace'; ctx.fillText(value, x, 94);
+    ctx.fillStyle = i === 3 && lit ? '#7CFC9A' : '#9ba5a4'; ctx.font = '700 20px Archivo, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(label, x, 40, i === 3 ? 160 : 170);
+    ctx.fillStyle = i === 2 ? '#f3f1ea' : i === 3 ? (lit ? '#7CFC9A' : '#4ade80') : '#ffae1a';
+    ctx.font = '400 58px VT323, monospace'; ctx.fillText(value, x, 94);
   });
+  // Baratinômetro gauge: one notch per clean bus that could have left all along.
+  const gx = 24 + 3 * 176 + 54, gw = 100, notches = 10, filled = Math.min(notches, passed);
+  for (let n = 0; n < notches; n++) {
+    ctx.fillStyle = n < filled ? (lit ? '#7CFC9A' : '#4ade80') : 'rgba(255,255,255,0.15)';
+    ctx.fillRect(gx + n * (gw / notches), 68, gw / notches - 3, 26);
+  }
 }
 
 function drawBanner(text: string) {
@@ -452,10 +478,10 @@ function drawEndCard() {
   const m = paceMinutes(), rip = ripAvgSec();
   ctx.fillStyle = '#ffae1a'; ctx.font = '400 46px VT323, monospace';
   const lines = [
-    passed > 0 ? `${passed} nem tinham adesivo do 13.` : '',
+    `Baratinômetro: ${passed} sem adesivo, parados à toa.`,
     rip !== null ? `Tirar o adesivo: ${fmt1(rip)} s.` : '',
     m !== null ? `No meu ritmo: 75 ônibus em ${fmt1(m)} min.` : '',
-    'A Semob: das 9h30 às 12h20.',
+    'Procon-BA: 944 ônibus parados.',
   ].filter(Boolean);
   lines.forEach((l, i) => ctx.fillText(l, W / 2, 950 + i * 54, W - 60));
   ctx.fillStyle = '#9ba5a4'; ctx.font = '600 30px Archivo, sans-serif'; ctx.fillText(`Sátira · ${SHARE_URL.replace(/^https?:\/\//, '')}`, W / 2, 1180);
@@ -500,10 +526,10 @@ async function finish() {
   $<HTMLElement>('#eRank').textContent = rankFor(score);
   const m = paceMinutes(), rip = ripAvgSec();
   const parts: string[] = [];
-  if (passed > 0) parts.push(`${buses(passed)} ${passed === 1 ? 'nem tinha' : 'nem tinham'} adesivo do 13 e ${passed === 1 ? 'saiu' : 'saíram'} num gesto.`);
+  if (passed > 0) parts.push(`Baratinômetro: ${buses(passed)} ${passed === 1 ? 'nem tinha' : 'nem tinham'} adesivo do 13 e ${passed === 1 ? 'saiu' : 'saíram'} num joinha. Por que ${passed === 1 ? 'estava parado' : 'estavam parados'}?`);
   if (rip !== null) parts.push(`Tirar cada adesivo levou ${fmt1(rip)} s em média.`);
-  if (m !== null) parts.push(`No seu ritmo, os ${RETIDOS} ônibus retidos estariam na rua em ${fmt1(m)} minutos. A Semob levou das 9h30 às 12h20.`);
-  else parts.push('Nenhum adesivo tirado. A Semob levou das 9h30 às 12h20.');
+  if (m !== null) parts.push(`No seu ritmo, os ${RETIDOS} ônibus que a prefeitura admite estariam na rua em ${fmt1(m)} minutos.`);
+  parts.push('O Procon-BA contou 944 ônibus parados em 9 garagens, e às 15h30 ainda havia garagem lotada.');
   $<HTMLElement>('#eLine').textContent = parts.join(' ');
   const vid = $<HTMLVideoElement>('#eVideo');
   const share = $<HTMLButtonElement>('#eShare');
@@ -524,7 +550,8 @@ function shareText() {
   const rip = ripAvgSec();
   const ripText = rip !== null ? ` Tirar o adesivo levou ${fmt1(rip)} s.` : '';
   const pace = m !== null ? ` No meu ritmo, os ${RETIDOS} ônibus retidos em Salvador estariam na rua em ${fmt1(m)} minutos.` : '';
-  return `🚌 Botei ${buses(score)} na rua em 60 segundos no Raspa Buzu.${ripText}${pace} A Semob levou das 9h30 às 12h20. Duvido você. ${SHARE_URL}/camera/`;
+  const clean = passed > 0 ? ` ${buses(passed)} nem tinham adesivo.` : '';
+  return `🚌 Botei ${buses(score)} na rua em 60 segundos no Raspa Buzu.${clean}${ripText}${pace} O Procon contou 944 ônibus parados. Duvido você. ${SHARE_URL}/camera/`;
 }
 
 $<HTMLButtonElement>('#eShare').addEventListener('click', async () => {

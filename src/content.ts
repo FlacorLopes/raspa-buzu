@@ -13,13 +13,28 @@ export const DECOYS: Decoy[] = [
 
 export const ACCESS_TOAST = 'Esse é o de acessibilidade. É obrigatório!';
 
+// Fictional texts from the absent secretary (he really was in Paris on an official mission).
 export const PARIS_BEFORE = [
   'Bonjour! Tô em missão oficial. Qualquer coisa, manda áudio.',
   'Que horas são aí? Aqui já tá na hora do almoço.',
   'Aqui o ônibus passa a cada 4 minutos. Tô anotando tudo pra Salvador.',
   'O wi-fi do hotel tá lento. Se eu sumir, foi isso.',
-  'Volto segunda. Segura as pontas aí.',
   'Comi um croissant que você nem acredita.',
+  'Fui no Louvre. A Mona Lisa não tem adesivo nenhum. Liberada.',
+  'Aqui o ônibus sai com propaganda de perfume e ninguém liga.',
+  'Liberté, égalité, adesivité.',
+  'Tô numa reunião sobre mobilidade. A dos outros, no caso.',
+  'Andei de metrô em Paris. Zero adesivo, zero garagem.',
+  'Me mandaram foto da garagem cheia. Achei que era estacionamento de shopping.',
+  'Pergunta pro motorista se ele sabe raspar com a unha.',
+  'Tô aprendendo francês: "le bus est dans le garage".',
+  'Torre Eiffel acesa. Frota de Salvador apagada. Que contraste lindo.',
+  'O guia disse que em Paris greve é esporte. Em Salvador é domingo.',
+  'Vou trazer uma espátula de lembrança pra equipe.',
+  'Bateau-mouche: ônibus que boia. Anotei pra licitação.',
+  'Deixei o carregador no Brasil. Junto com a frota.',
+  'Volto segunda. Segura as pontas aí.',
+  'Alguém tem o contato do adesivo? Quero negociar.',
 ];
 
 export const PARIS_AFTER = [
@@ -27,21 +42,38 @@ export const PARIS_AFTER = [
   'Avisa à PF que meu voo é só amanhã.',
   'Calma. Até eu chegar, isso perde o objeto.',
   'Vou botar o celular no modo avião. Por segurança.',
+  'Será que a missão oficial pode ser estendida? Uns dez anos?',
+  'Se perguntarem, eu tava na reunião de mobilidade.',
+  'Comprei uma boina. Não é disfarce, é moda.',
+  'Pede pro TRE mandar por e-mail. Aqui o fax não funciona.',
+  'O voo de volta tem conexão. Igual ônibus em Salvador: demora.',
+  'Alguém liga pro prefeito? Ele não atende o francês.',
+];
+
+/** Toasts when a bus with no 13 sticker goes out: it could have left all along. */
+export const CLEAN_BUS_TOASTS = [
+  'Esse nem tinha adesivo. Tava parado por quê?',
+  'Limpinho desde as 6h. E na garagem.',
+  'Sem 13, sem desculpa.',
+  'Mais um sem adesivo esperando ordem.',
+  'Zero adesivo. Qual era o problema mesmo?',
 ];
 
 export interface ClockEvent { at: number; text: string; unlock?: boolean; arrest?: boolean }
 
 /** `at` is minutes since midnight on the in-game clock (06h00 to 17h00). */
 export const EVENTS: ClockEvent[] = [
-  { at: 360, text: '06h · Garagem aberta. Tem adesivo no para-brisa.' },
-  { at: 420, text: 'A prefeitura tinha prometido a frota toda na rua.' },
-  { at: 570, text: '09h30 · Semob diz ter sido avisada da “adesivação”.' },
-  { at: 620, text: 'Semob: a frota foi a mesma do 1º turno.' },
+  { at: 360, text: '06h · Garagem aberta. A prefeitura prometeu a frota toda na rua.' },
+  { at: 470, text: 'Ponto lotado, garagem lotada. Motoristas oferecem carona solidária.' },
+  { at: 570, text: '09h30 · Semob diz que o problema é um adesivo no para-brisa.' },
+  { at: 620, text: 'Semob: a frota foi a mesma do 1º turno. Então não era o adesivo?' },
   { at: 665, text: '11h05 · Pedido à Justiça: ônibus ainda na garagem.' },
-  { at: 740, text: '12h20 · Nova ordem: pode sair com adesivo!', unlock: true },
+  { at: 700, text: 'Procon-BA: 944 ônibus parados em 9 garagens. Na G5, 64.' },
+  { at: 740, text: '12h20 · Semob diz que normalizou. Pode sair com adesivo!', unlock: true },
   { at: 775, text: 'Bruno Reis: tirar adesivo atrasou a operação.' },
   { at: 815, text: 'TRE-BA: frota toda na rua, multa de R$ 1 mi por hora.' },
   { at: 875, text: 'TRE-BA manda a PF prender o secretário. Ele está em Paris.', arrest: true },
+  { at: 930, text: '15h30 · Rui Costa filma garagem no Subúrbio: “São centenas de ônibus”.' },
 ];
 
 export const CLOCK_START = 6 * 60;

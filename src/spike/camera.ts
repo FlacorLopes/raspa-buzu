@@ -10,7 +10,7 @@ const MODEL_URLS: Record<string, string> = {
 /** ?m=local (default) | google picks where the model is downloaded from. */
 const MODEL_SRC = new URLSearchParams(location.search).get('m') === 'google' ? 'google' : 'local';
 const MODEL_URL = MODEL_URLS[MODEL_SRC];
-let dlBytes = 0, dlTotal = 0, dlStart = 0;
+let dlBytes = 0, dlTotal = 0, dlStart = 0, dlEnd = 0;
 const WASM_BASE = '/mediapipe/wasm';
 declare const __BUILD__: string;
 /** ?d=gpu | cpu | auto (default) picks the inference delegate. */
@@ -158,6 +158,7 @@ async function loadModel() {
       if (end) break;
       chunks.push(value); dlBytes += value.length;
     }
+    dlEnd = performance.now();
     model = new Uint8Array(dlBytes);
     let off = 0;
     for (const c of chunks) { model.set(c, off); off += c.length; }
@@ -227,6 +228,20 @@ delegateSel.addEventListener('change', () => {
 });
 resSel.addEventListener('change', () => { if (stream) startCamera(); });
 
+// ---------- detection input ----------
+// Sending the full camera frame to the GPU is expensive; optionally shrink it first.
+const inputSel = $<HTMLSelectElement>('#input');
+const small = document.createElement('canvas');
+const smallCtx = small.getContext('2d')!;
+function detectionSource(): HTMLVideoElement | HTMLCanvasElement {
+  const w = Number(inputSel.value);
+  if (!w || !video.videoWidth) return video;
+  const h = Math.round((w * video.videoHeight) / video.videoWidth);
+  if (small.width !== w || small.height !== h) { small.width = w; small.height = h; }
+  smallCtx.drawImage(video, 0, 0, w, h);
+  return small;
+}
+
 // ---------- loop ----------
 let frameNo = 0;
 let lastVideoTime = -1;
@@ -241,7 +256,7 @@ function loop() {
     frameNo++;
     if (frameNo % Number(everySel.value) === 0) {
       const t0 = performance.now();
-      const res = landmarker.detectForVideo(video, t0);
+      const res = landmarker.detectForVideo(detectionSource(), t0);
       pushWindow(inferTimes, performance.now() - t0);
       pushWindow(inferStamps, t0);
       frames++;
@@ -328,7 +343,7 @@ function hudText() {
     landmarker
       ? `modelo ok (${delegate}, ${modelMs} ms)${gpuError ? ` · GPU falhou: ${gpuError}` : ''}`
       : lastError ? 'modelo falhou' : `${stage}… ${((performance.now() - stageStart) / 1000).toFixed(0)}s${performance.now() - stageStart > 15000 ? ' (TRAVOU AQUI?)' : ''}`,
-    stage === 'baixando modelo' || dlBytes ? `download (${MODEL_SRC}): ${(dlBytes / 1e6).toFixed(2)}${dlTotal ? ` / ${(dlTotal / 1e6).toFixed(2)}` : ''} MB · ${dlStart ? ((dlBytes / 1e6) / Math.max(0.001, (performance.now() - dlStart) / 1000)).toFixed(2) : '0'} MB/s` : '',
+    stage === 'baixando modelo' || dlBytes ? `download (${MODEL_SRC}): ${(dlBytes / 1e6).toFixed(2)}${dlTotal ? ` / ${(dlTotal / 1e6).toFixed(2)}` : ''} MB · ${dlStart ? ((dlBytes / 1e6) / Math.max(0.001, ((dlEnd || performance.now()) - dlStart) / 1000)).toFixed(2) : '0'} MB/s` : '',
     stageLog.length ? `etapas: ${stageLog.join(' · ')}` : '',
     `detecção: ${rate(inferStamps).toFixed(1)} fps · ${median(inferTimes).toFixed(1)} ms/quadro (mediana)`,
     `tela: ${rate(renderStamps).toFixed(0)} fps · câmera ${video.videoWidth}×${video.videoHeight}`,
@@ -394,7 +409,7 @@ $<HTMLButtonElement>('#report').addEventListener('click', async () => {
     navigator.userAgent,
     `tela ${screen.width}×${screen.height} @${devicePixelRatio}`,
     hudText(),
-    `detectar a cada: ${everySel.value} · gravação: ${recResult}`,
+    `detectar a cada: ${everySel.value} · entrada: ${inputSel.value === '0' ? 'câmera inteira' : inputSel.value + 'px'} · gravação: ${recResult}`,
   ].join('\n');
   try { await navigator.clipboard.writeText(text); say('copiado'); }
   catch { hud.textContent = text; }

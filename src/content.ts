@@ -24,17 +24,11 @@ export const PARIS_BEFORE = [
   'Aqui o ônibus sai com propaganda de perfume e ninguém liga.',
   'Liberté, égalité, adesivité.',
   'Tô numa reunião sobre mobilidade. A dos outros, no caso.',
-  'Andei de metrô em Paris. Zero adesivo, zero garagem.',
   'Me mandaram foto da garagem cheia. Achei que era estacionamento de shopping.',
-  'Pergunta pro motorista se ele sabe raspar com a unha.',
   'Tô aprendendo francês: "le bus est dans le garage".',
-  'Torre Eiffel acesa. Frota de Salvador apagada. Que contraste lindo.',
-  'O guia disse que em Paris greve é esporte. Em Salvador é domingo.',
   'Vou trazer uma espátula de lembrança pra equipe.',
-  'Bateau-mouche: ônibus que boia. Anotei pra licitação.',
   'Deixei o carregador no Brasil. Junto com a frota.',
   'Volto segunda. Segura as pontas aí.',
-  'Alguém tem o contato do adesivo? Quero negociar.',
 ];
 
 export const PARIS_AFTER = [
@@ -42,11 +36,7 @@ export const PARIS_AFTER = [
   'Avisa à PF que meu voo é só amanhã.',
   'Calma. Até eu chegar, isso perde o objeto.',
   'Vou botar o celular no modo avião. Por segurança.',
-  'Será que a missão oficial pode ser estendida? Uns dez anos?',
-  'Se perguntarem, eu tava na reunião de mobilidade.',
-  'Comprei uma boina. Não é disfarce, é moda.',
-  'Pede pro TRE mandar por e-mail. Aqui o fax não funciona.',
-  'O voo de volta tem conexão. Igual ônibus em Salvador: demora.',
+  'O voo de volta tem conexão. Igual ônibus em Salvador: demora retada.',
   'Alguém liga pro prefeito? Ele não atende o francês.',
 ];
 

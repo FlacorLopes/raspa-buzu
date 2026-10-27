@@ -3,8 +3,12 @@
 
 import { FilesetResolver, HandLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision';
 
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+const MODEL_URL = '/mediapipe/hand_landmarker.task';
 const WASM_BASE = '/mediapipe/wasm';
+declare const __BUILD__: string;
+/** ?d=gpu | cpu | auto (default) picks the inference delegate. */
+const DELEGATE_PREF = (new URLSearchParams(location.search).get('d') ?? 'auto').toLowerCase();
+const GPU_TIMEOUT_MS = 12_000;
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 const cv = $<HTMLCanvasElement>('#cv');
@@ -113,29 +117,58 @@ function describe(e: unknown): string {
 }
 
 let gpuError = '';
+// Loading happens in stages so a stall on the phone shows where it stopped.
+let stage = 'iniciando';
+let stageStart = performance.now();
+const stageLog: string[] = [];
+function enter(name: string) { stage = name; stageStart = performance.now(); }
+function done(label: string) { stageLog.push(`${label} ${((performance.now() - stageStart) / 1000).toFixed(1)}s`); }
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string) {
+  return Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${label} travou (> ${ms / 1000}s)`)), ms))]);
+}
+
 async function loadModel() {
   const t0 = performance.now();
+  enter('baixando motor wasm');
   let fileset;
   try { fileset = await FilesetResolver.forVisionTasks(WASM_BASE); }
   catch (e) { throw new Error(`motor wasm: ${describe(e)}`); }
+  done('motor');
+
+  enter('baixando modelo');
+  let model: Uint8Array;
   try {
-    landmarker = await HandLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-      runningMode: 'VIDEO', numHands: 1,
-    });
-    delegate = 'GPU';
-  } catch (e) {
-    gpuError = describe(e);
+    const res = await fetch(MODEL_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    model = new Uint8Array(await res.arrayBuffer());
+  } catch (e) { throw new Error(`modelo: ${describe(e)}`); }
+  done(`modelo ${(model.length / 1e6).toFixed(1)}MB`);
+
+  const create = (d: 'GPU' | 'CPU') => HandLandmarker.createFromOptions(fileset, {
+    baseOptions: { modelAssetBuffer: model, delegate: d },
+    runningMode: 'VIDEO', numHands: 1,
+  });
+
+  if (DELEGATE_PREF !== 'cpu') {
+    enter('iniciando GPU');
     try {
-      landmarker = await HandLandmarker.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
-        runningMode: 'VIDEO', numHands: 1,
-      });
-      delegate = 'CPU';
-    } catch (e2) {
-      throw new Error(`GPU: ${gpuError} | CPU: ${describe(e2)}`);
+      landmarker = await withTimeout(create('GPU'), GPU_TIMEOUT_MS, 'GPU');
+      delegate = 'GPU';
+      done('GPU');
+    } catch (e) {
+      gpuError = describe(e);
+      if (DELEGATE_PREF === 'gpu') throw new Error(`GPU: ${gpuError}`);
     }
   }
+  if (!landmarker) {
+    enter('iniciando CPU');
+    try { landmarker = await create('CPU'); }
+    catch (e) { throw new Error(`CPU: ${describe(e)}${gpuError ? ` | GPU: ${gpuError}` : ''}`); }
+    delegate = 'CPU';
+    done('CPU');
+  }
+  stage = 'pronto';
   modelMs = Math.round(performance.now() - t0);
 }
 
@@ -159,6 +192,13 @@ async function startCamera() {
 }
 
 startBtn.addEventListener('click', startCamera);
+const delegateSel = $<HTMLSelectElement>('#delegate');
+delegateSel.value = ['gpu', 'cpu'].includes(DELEGATE_PREF) ? DELEGATE_PREF : 'auto';
+delegateSel.addEventListener('change', () => {
+  const u = new URL(location.href);
+  u.searchParams.set('d', delegateSel.value);
+  location.href = u.toString();
+});
 resSel.addEventListener('change', () => { if (stream) startCamera(); });
 
 // ---------- loop ----------
@@ -258,7 +298,11 @@ function draw(now: number) {
 function hudText() {
   const handPct = frames ? Math.round((framesWithHand / frames) * 100) : 0;
   return [
-    landmarker ? `modelo ok (${delegate}, ${modelMs} ms p/ carregar)${gpuError ? ` · GPU falhou: ${gpuError}` : ''}` : lastError ? 'modelo falhou' : 'carregando modelo…',
+    `versão ${__BUILD__} · modo ${DELEGATE_PREF}`,
+    landmarker
+      ? `modelo ok (${delegate}, ${modelMs} ms)${gpuError ? ` · GPU falhou: ${gpuError}` : ''}`
+      : lastError ? 'modelo falhou' : `${stage}… ${((performance.now() - stageStart) / 1000).toFixed(0)}s${performance.now() - stageStart > 15000 ? ' (TRAVOU AQUI?)' : ''}`,
+    stageLog.length ? `etapas: ${stageLog.join(' · ')}` : '',
     `detecção: ${rate(inferStamps).toFixed(1)} fps · ${median(inferTimes).toFixed(1)} ms/quadro (mediana)`,
     `tela: ${rate(renderStamps).toFixed(0)} fps · câmera ${video.videoWidth}×${video.videoHeight}`,
     `mão visível: ${handPct}% · raspadas: ${scrapeHits} · adesivos: ${scraped} · tchaus: ${waves}`,
@@ -319,6 +363,7 @@ $<HTMLButtonElement>('#recClose').addEventListener('click', () => { recBox.hidde
 $<HTMLButtonElement>('#report').addEventListener('click', async () => {
   const text = [
     'Raspa Buzu · relatório do teste de câmera',
+    location.href,
     navigator.userAgent,
     `tela ${screen.width}×${screen.height} @${devicePixelRatio}`,
     hudText(),

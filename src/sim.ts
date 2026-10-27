@@ -60,7 +60,7 @@ function mix(seed: number, i: number) {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
-const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ'.split('');
 
 /** Bus number `i` of the run with `seed`. Independent of every other bus. */
 export function busSpec(seed: number, i: number): BusSpec {

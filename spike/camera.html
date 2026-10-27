@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Raspa Buzu · teste de câmera</title>
+<style>
+  :root { --bg: #111415; --ink: #f3f1ea; --mute: #9ba5a4; --hazard: #f5c518; --red: #d4251c; --go: #1f9d55; color-scheme: dark; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #wrap { position: fixed; inset: 0; display: grid; place-items: center; }
+  canvas { max-width: 100%; max-height: 100%; aspect-ratio: 9 / 16; background: #000; touch-action: none; }
+  #hud {
+    position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0;
+    padding: 8px 10px; font: 13px/1.35 ui-monospace, monospace; background: rgba(0,0,0,.55);
+    white-space: pre-wrap; pointer-events: none;
+  }
+  #bar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+    display: flex; flex-wrap: wrap; gap: 6px; background: rgba(0,0,0,.6);
+  }
+  button, select, a.btn {
+    font: 600 14px system-ui, sans-serif; color: var(--ink); background: #2a2f30;
+    border: 1px solid #3a4243; border-radius: 8px; padding: 9px 12px; text-decoration: none;
+  }
+  button.primary { background: var(--hazard); color: #111; border-color: var(--hazard); }
+  #rec { position: fixed; inset: 10% 6%; background: #1b1f20; border: 1px solid #3a4243; border-radius: 12px; padding: 12px; display: grid; gap: 8px; align-content: start; overflow: auto; }
+  #rec video { width: 100%; max-height: 55vh; background: #000; border-radius: 8px; }
+  #rec .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  [hidden] { display: none !important; }
+  #msg { position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); font: 800 34px system-ui; color: var(--hazard); text-shadow: 0 2px 8px #000; pointer-events: none; }
+</style>
+</head>
+<body>
+  <div id="wrap"><canvas id="cv" width="720" height="1280"></canvas></div>
+  <div id="hud">Carregando o modelo de mão…</div>
+  <div id="msg"></div>
+  <div id="bar">
+    <button id="start" class="primary" type="button">Ligar câmera</button>
+    <select id="res" aria-label="Resolução da câmera">
+      <option value="480">câmera 480p</option>
+      <option value="720" selected>câmera 720p</option>
+    </select>
+    <select id="every" aria-label="Frequência da detecção">
+      <option value="1" selected>detectar todo quadro</option>
+      <option value="2">detectar 1 a cada 2</option>
+    </select>
+    <button id="record" type="button" disabled>Gravar 5s</button>
+    <button id="report" type="button">Copiar relatório</button>
+  </div>
+  <div id="rec" hidden>
+    <strong id="recInfo"></strong>
+    <video id="recVideo" controls playsinline></video>
+    <div class="row">
+      <button id="recShare" type="button">Compartilhar vídeo</button>
+      <a id="recDownload" class="btn" download="raspa-buzu-teste">Baixar</a>
+      <button id="recClose" type="button">Fechar</button>
+    </div>
+  </div>
+  <script type="module" src="../src/spike/camera.ts"></script>
+</body>
+</html>

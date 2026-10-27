@@ -50,7 +50,7 @@ test('a clean run replays to the expected score', () => {
   const seed = 123456;
   const log = botRun(seed);
   const r = replay(seed, log);
-  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.ok, true, r.reason ?? '');
   assert.equal(r.score, log.filter((e) => e[1] === EV.SCRAPE).length > 0 ? r.scraped : 0);
   assert.ok(r.score > 10 && r.score < 55, `score ${r.score}`);
 });
@@ -76,12 +76,12 @@ test('releasing a stickered bus is blocked before 12h20 and forced after', () =>
   assert.equal(before.buses, 0);
   const log = botRun(9, { forceAfterUnlock: true });
   const r = replay(9, log);
-  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.ok, true, r.reason ?? '');
   assert.ok(r.forced > 0);
 });
 
 test('a bot at the browser limit stays under a sane ceiling', () => {
   const r = replay(77, botRun(77, { gap: MIN_SCRAPE_GAP_MS, react: 0 }));
-  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.ok, true, r.reason ?? '');
   assert.ok(r.score < 70, `score ${r.score}`);
 });

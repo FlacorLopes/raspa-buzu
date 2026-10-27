@@ -50,7 +50,7 @@ export class Sfx {
     const src = this.ctx.createBufferSource();
     const gain = this.ctx.createGain();
     src.buffer = this.music;
-    gain.gain.value = 0.55;           // under the effects
+    gain.gain.value = 0.33;           // under the effects (lowered 40% after a phone test)
     src.connect(gain).connect(this.out);
     src.start(0, offset);
     this.musicSrc = src; this.musicGain = gain;

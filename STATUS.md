@@ -15,7 +15,7 @@ como sátira.
 | https://raspa-buzu-lab.vercel.app | Projeto de testes antigo, **desatualizado** | `raspa-buzu-lab` | (versão de antes do CDN) |
 
 Publicar produção: `vercel deploy --prod --yes` nesta pasta.
-O repositório **não tem remote** (só local). A v1 (HTML único, modo toque) está na tag `v1-artifact` e em `legacy/`.
+Repositório público: https://github.com/FlacorLopes/raspa-buzu (só `main` e a tag `v1-artifact`; os branches `feat/*` ficam locais). A v1 (HTML único, modo toque) está na tag `v1-artifact` e em `legacy/`.
 
 ## Como rodar
 
@@ -71,7 +71,7 @@ Ajudas de teste na URL:
 4. Ver a prévia do link no WhatsApp.
 5. Ajustar dificuldade: faixas do baratinômetro (com 60% de ônibus limpos o Baratino master chega cedo) e gatilho do easter egg.
 6. Decidir se tira de "fatos e fontes" a frase da Semob sobre "70% da frota".
-7. Subir o repositório para um GitHub privado. Apagar o projeto `raspa-buzu-lab` se não for mais usado.
+7. Apagar o projeto `raspa-buzu-lab` se não for mais usado.
 8. Fora de uso: o modo toque (v1, em `legacy/`) e o branch `feat/ranking` (ranking global com Upstash, descartado). As páginas de teste `/spike/camera.html` e `/spike/swipe.html` continuam publicadas.
 
 ## Preferências do usuário

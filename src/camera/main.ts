@@ -88,7 +88,6 @@ function resetRun() {
   banner = { text: '', until: 0 };
   bus = newBus(0, 0);
 }
-resetRun();
 
 // ---------- layout ----------
 const BUS: Rect = { x: 70, w: 580, h: 580 / 0.82, y: 0 };
@@ -714,6 +713,9 @@ if (MOUSE) {
   });
   cv.addEventListener('contextmenu', (e) => { e.preventDefault(); thumbsUp(); });
 }
+
+// After every `let` above: resetRun() touches state declared all over the file.
+resetRun();
 
 // ---------- start ----------
 // In-app browsers (Instagram, Facebook, LinkedIn...) often refuse the camera outright.

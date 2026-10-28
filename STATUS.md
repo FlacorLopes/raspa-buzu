@@ -14,7 +14,7 @@ como sátira.
 | https://raspa-buzu-deslize.vercel.app | Variante com deslize da mão (descartada, guardada) | `raspa-buzu-deslize` | `feat/camera-swipe` (worktree em `~/raspa-buzu-deslize`) |
 | https://raspa-buzu-lab.vercel.app | Projeto de testes antigo, **desatualizado** | `raspa-buzu-lab` | (versão de antes do CDN) |
 
-Publicar produção: `vercel deploy --prod --yes` nesta pasta.
+Publicar produção: `git push` no `main` (o repositório está conectado à Vercel; outros branches viram preview). `vercel deploy --prod --yes` nesta pasta continua funcionando.
 Repositório público: https://github.com/FlacorLopes/raspa-buzu (só `main` e a tag `v1-artifact`; os branches `feat/*` ficam locais). A v1 (HTML único, modo toque) está na tag `v1-artifact` e em `legacy/`.
 
 ## Como rodar
